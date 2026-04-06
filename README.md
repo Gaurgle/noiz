@@ -1,5 +1,10 @@
 # noiz
 
+![Rust](https://img.shields.io/badge/Rust-stable-dea584?logo=rust)
+![Platform](https://img.shields.io/badge/platform-macOS%20·%20Linux-lightgrey)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Audio](https://img.shields.io/badge/audio-white%20·%20pink%20·%20brown-89b4fa)
+
 Terminal noise generator for focus and concentration.
 
 Real-time stereo noise synthesis with smooth crossfading, subtle modulation, binaural beats, and a minimal TUI. No audio files — everything is generated on the fly.

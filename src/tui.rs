@@ -4,17 +4,19 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Padding, Paragraph};
 
 use crate::audio::AudioState;
 
 const NOISE_NAMES: [&str; 6] = ["white", "pink", "brown", "focus", "sleep", "deep"];
-
-const LOGO: &str = r#"
-  ░█▀█░█▀█░▀█▀░▀▀█
-  ░█░█░█░█░░█░░▄▀░
-  ░▀░▀░▀▀▀░▀▀▀░▀▀▀
-"#;
+const NOISE_DESCRIPTIONS: [&str; 6] = [
+    "equal energy, bright",
+    "natural, balanced",
+    "deep, warm rumble",
+    "pink+brown, present",
+    "mostly brown, dark",
+    "pink+brown, full",
+];
 
 pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = ratatui::init();
@@ -27,6 +29,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
         let binaural = *state.binaural_freq.lock().unwrap();
         let modulation = *state.modulation_depth.lock().unwrap();
         let noise_name = NOISE_NAMES.get(noise_idx).unwrap_or(&"?");
+        let noise_desc = NOISE_DESCRIPTIONS.get(noise_idx).unwrap_or(&"");
 
         let timer_str = timer_end.map(|end| {
             let now = Instant::now();
@@ -41,7 +44,6 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             }
         });
 
-        // Check if timer expired
         if let Some(end) = timer_end {
             if Instant::now() >= end {
                 *state.fade_out_duration.lock().unwrap() = 5.0;
@@ -55,7 +57,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
         terminal.draw(|frame| {
             let area = frame.area();
 
-            let dim = Color::Rgb(127, 132, 156);
+            let dim = Color::Rgb(100, 104, 125);
             let text = Color::Rgb(205, 214, 244);
             let blue = Color::Rgb(116, 199, 236);
             let green = Color::Rgb(166, 227, 161);
@@ -64,93 +66,96 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             let mauve = Color::Rgb(203, 166, 247);
             let red = Color::Rgb(243, 139, 168);
             let surface = Color::Rgb(69, 71, 90);
+            let subtle = Color::Rgb(55, 57, 75);
 
-            // Volume bar
-            let vol_bar_len = 20;
-            let vol_filled = (volume * vol_bar_len as f32) as usize;
-            let vol_bar = format!("{}{}", "█".repeat(vol_filled), "░".repeat(vol_bar_len - vol_filled));
+            let bar_len = 22;
+
+            // Volume bar with thin blocks for smoother look
+            let vol_filled = (volume * bar_len as f32) as usize;
+            let vol_bar = format!("{}{}", "━".repeat(vol_filled), "╌".repeat(bar_len - vol_filled));
 
             // Modulation bar
-            let mod_bar_len = 20;
-            let mod_filled = (modulation / 0.20 * mod_bar_len as f32) as usize;
-            let mod_bar = format!("{}{}", "█".repeat(mod_filled.min(mod_bar_len)), "░".repeat(mod_bar_len - mod_filled.min(mod_bar_len)));
+            let mod_filled = (modulation / 0.20 * bar_len as f32) as usize;
+            let mod_bar = format!("{}{}", "━".repeat(mod_filled.min(bar_len)), "╌".repeat(bar_len - mod_filled.min(bar_len)));
 
-            let status_icon = if paused { "◆" } else { "▸" };
+            let status_icon = if paused { "■" } else { "▸" };
             let status_color = if paused { yellow } else { green };
 
-            // Build lines
             let mut lines: Vec<Line> = Vec::new();
 
-            // Logo
-            for logo_line in LOGO.trim_start_matches('\n').lines() {
-                lines.push(Line::from(Span::styled(logo_line, Style::default().fg(mauve))));
-            }
-
-            // Status
+            // Header — logo + status on same visual block
             lines.push(Line::from(vec![
-                Span::styled(format!("  {status_icon} "), Style::default().fg(status_color)),
-                Span::styled(format!("{noise_name}"), Style::default().fg(text).add_modifier(Modifier::BOLD)),
-                Span::styled(if paused { "  paused" } else { "" }, Style::default().fg(dim)),
+                Span::styled("  noiz", Style::default().fg(mauve).add_modifier(Modifier::BOLD)),
+                Span::styled("  ", Style::default()),
+                Span::styled(status_icon, Style::default().fg(status_color)),
+                Span::styled(format!(" {noise_name}"), Style::default().fg(text)),
+                Span::styled(format!("  {noise_desc}"), Style::default().fg(dim)),
             ]));
 
-            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("  ─────────────────────────────────", Style::default().fg(subtle))));
 
-            // Noise type selector
-            let mut type_spans: Vec<Span> = vec![Span::styled("  src  ", Style::default().fg(dim))];
+            // Source selector — compact, clear active state
+            let mut type_line: Vec<Span> = vec![Span::styled("  ", Style::default())];
             for (i, name) in NOISE_NAMES.iter().enumerate() {
                 let key = format!("{}", i + 1);
                 let is_active = i == noise_idx;
+                let sep = if i < NOISE_NAMES.len() - 1 { "  " } else { "" };
                 if is_active {
-                    type_spans.push(Span::styled(key, Style::default().fg(blue).add_modifier(Modifier::BOLD)));
-                    type_spans.push(Span::styled(format!("{} ", name), Style::default().fg(text)));
+                    type_line.push(Span::styled(key, Style::default().fg(blue).add_modifier(Modifier::BOLD)));
+                    type_line.push(Span::styled(format!(" {name}{sep}"), Style::default().fg(text)));
                 } else {
-                    type_spans.push(Span::styled(format!("{}{} ", key, name), Style::default().fg(surface)));
+                    type_line.push(Span::styled(key, Style::default().fg(surface)));
+                    type_line.push(Span::styled(format!(" {name}{sep}"), Style::default().fg(surface)));
                 }
             }
-            lines.push(Line::from(type_spans));
+            lines.push(Line::from(type_line));
 
             lines.push(Line::from(""));
 
             // Volume
             lines.push(Line::from(vec![
-                Span::styled("  vol  ", Style::default().fg(dim)),
+                Span::styled("  vol ", Style::default().fg(dim)),
                 Span::styled(&vol_bar, Style::default().fg(blue)),
-                Span::styled(format!("  {:.0}%", volume * 100.0), Style::default().fg(dim)),
+                Span::styled(format!("  {:>3.0}%", volume * 100.0), Style::default().fg(dim)),
             ]));
 
             // Modulation
             lines.push(Line::from(vec![
-                Span::styled("  mod  ", Style::default().fg(dim)),
+                Span::styled("  mod ", Style::default().fg(dim)),
                 Span::styled(&mod_bar, Style::default().fg(mauve)),
-                Span::styled(format!("  {:.0}%", modulation * 100.0), Style::default().fg(dim)),
+                Span::styled(format!("  {:>3.0}%", modulation * 100.0), Style::default().fg(dim)),
             ]));
 
-            // Binaural
-            if binaural > 0.0 {
-                lines.push(Line::from(vec![
-                    Span::styled("  bin  ", Style::default().fg(dim)),
-                    Span::styled(format!("{binaural:.0} Hz"), Style::default().fg(peach)),
-                ]));
-            }
-
-            // Timer
-            if let Some(ref t) = timer_str {
-                lines.push(Line::from(vec![
-                    Span::styled("  tmr  ", Style::default().fg(dim)),
-                    Span::styled(t.clone(), Style::default().fg(yellow)),
-                ]));
+            // Binaural + Timer row (conditional, on same conceptual level)
+            if binaural > 0.0 || timer_str.is_some() {
+                lines.push(Line::from(""));
+                if binaural > 0.0 {
+                    lines.push(Line::from(vec![
+                        Span::styled("  bin ", Style::default().fg(dim)),
+                        Span::styled(format!("{binaural:.0} Hz"), Style::default().fg(peach)),
+                        Span::styled("  binaural beat", Style::default().fg(subtle)),
+                    ]));
+                }
+                if let Some(ref t) = timer_str {
+                    lines.push(Line::from(vec![
+                        Span::styled("  tmr ", Style::default().fg(dim)),
+                        Span::styled(t.clone(), Style::default().fg(yellow)),
+                        Span::styled("  remaining", Style::default().fg(subtle)),
+                    ]));
+                }
             }
 
             lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("  ─────────────────────────────────", Style::default().fg(subtle))));
 
-            // Keybindings
+            // Keybindings — grouped logically
             lines.push(Line::from(vec![
                 Span::styled("  ↑↓", Style::default().fg(blue)),
-                Span::styled(" vol  ", Style::default().fg(dim)),
+                Span::styled(" vol   ", Style::default().fg(dim)),
                 Span::styled("[]", Style::default().fg(mauve)),
-                Span::styled(" mod  ", Style::default().fg(dim)),
+                Span::styled(" mod   ", Style::default().fg(dim)),
                 Span::styled("space", Style::default().fg(green)),
-                Span::styled(" pause  ", Style::default().fg(dim)),
+                Span::styled(" pause   ", Style::default().fg(dim)),
                 Span::styled("q", Style::default().fg(red)),
                 Span::styled("uit", Style::default().fg(dim)),
             ]));
@@ -158,7 +163,8 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             let block = Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(surface))
-                .border_type(ratatui::widgets::BorderType::Rounded);
+                .border_type(ratatui::widgets::BorderType::Rounded)
+                .padding(Padding::new(1, 1, 1, 0));
 
             let paragraph = Paragraph::new(lines).block(block);
             frame.render_widget(paragraph, area);
