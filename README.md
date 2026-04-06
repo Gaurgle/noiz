@@ -46,8 +46,8 @@ noiz pink+brown         # mix noise types
 | `↑` / `↓` | Volume up/down |
 | `[` / `]` | Modulation depth up/down |
 | `b` | Toggle binaural on/off |
-| `←` / `→` | Binaural beat frequency (0.1–20 Hz) |
-| `+` / `-` | Binaural tone pitch (20–300 Hz) |
+| `←` / `→` | Binaural pitch split (0.1–20 Hz) |
+| `+` / `-` | Binaural base tone (20–300 Hz) |
 | `<` / `>` | Binaural volume |
 | `space` | Pause/resume |
 | `q` / `Esc` / `Ctrl+C` | Quit (750ms fade out) |
@@ -62,11 +62,11 @@ noiz pink+brown         # mix noise types
 
 ## Presets
 
-| Preset | Mix | Binaural | Tone | Character |
-|--------|-----|----------|------|-----------|
-| **focus** | 80% pink + 20% brown | 2 Hz | 80 Hz | Slow pulse, masks distractions |
-| **sleep** | 10% pink + 90% brown | 0.5 Hz | 60 Hz | Very slow, deep drone |
-| **deep** | 40% pink + 60% brown | 1 Hz | 70 Hz | Slow, dark, full-bodied |
+| Preset | Mix | Split | Tone | Character |
+|--------|-----|-------|------|-----------|
+| **focus** | 80% pink + 20% brown | 2 Hz | 80 Hz | Slow, masks distractions |
+| **sleep** | 10% pink + 90% brown | 0.5 Hz | 60 Hz | Very slow, deep |
+| **deep** | 40% pink + 60% brown | 1 Hz | 70 Hz | Dark, full-bodied |
 | **theta** | brown | 4 Hz | 80 Hz | Theta waves, meditation |
 | **zen** | 30% pink + 70% brown | 0.3 Hz | 50 Hz | Extremely slow, deepest |
 
@@ -76,7 +76,7 @@ noiz pink+brown         # mix noise types
 - **Smooth transitions** — 2-second crossfade when switching noise types
 - **Fade in/out** — 750ms fade on start and quit, 5s fade on timer expiry
 - **Modulation** — adjustable slow LFO on volume (different phase per channel) to prevent static feel
-- **Binaural beats** — sine tone with harmonic, configurable frequency (0.1–20 Hz), pitch (20–300 Hz), and volume
+- **Binaural beats** — discrete L/R sine tones with configurable pitch split (0.1–20 Hz), base tone (20–300 Hz), and volume. The perceived beat emerges from the frequency difference between ears
 - **Visualizer** — 2D infinity symbol that breathes in sync with binaural modulation
 - **Timer** — supports `30s`, `45m`, `1h` durations with automatic fade out
 

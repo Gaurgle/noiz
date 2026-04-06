@@ -13,11 +13,11 @@ const NOISE_DESCRIPTIONS: [&str; 8] = [
     "equal energy, bright",
     "natural, balanced",
     "deep, warm rumble",
-    "pink+brown, 2Hz bin @80",
-    "brown, 0.5Hz bin @60",
-    "pink+brown, 1Hz bin @70",
+    "pink+brown, 2Hz split @80",
+    "brown, 0.5Hz split @60",
+    "pink+brown, 1Hz split @70",
     "brown, 4Hz theta @80",
-    "deep, 0.3Hz bin @50",
+    "deep, 0.3Hz split @50",
 ];
 
 // Infinity symbol frames — 2D breathing animation (5 states, 3 rows each)
@@ -124,7 +124,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 let row_end = (row_start + 4).min(NOISE_NAMES.len());
                 for i in row_start..row_end {
                     let name = NOISE_NAMES[i];
-                    let key = format!("{}", i + 1);
+                    let key = format!("{}", (i + 1) % 10); // 10 → 0
                     let is_active = i == noise_idx;
                     let sep = if i < row_end - 1 { "  " } else { "" };
                     if is_active {
@@ -179,19 +179,16 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 }
             }
 
-            // Visualizer — infinity symbol pulsing with binaural or LFO
+            // Visualizer — infinity symbol pulsing with binaural split or LFO
             let elapsed = start_time.elapsed().as_secs_f32();
             let pulse_rate = if binaural > 0.0 {
-                // Divide binaural freq to visually comfortable range (0.5-2 Hz)
-                (binaural / 4.0).clamp(0.5, 2.0)
+                (binaural / 4.0).clamp(0.3, 2.0)
             } else {
-                0.04 // match LFO rate
+                0.04
             };
             let phase = (elapsed * pulse_rate * std::f32::consts::TAU).sin();
-            // Map sine (-1..1) to brightness (0.0..1.0)
             let brightness = (phase + 1.0) / 2.0;
 
-            // Interpolate color between subtle and active
             let vis_color = if binaural > 0.0 {
                 let r = (55.0 + brightness * (250.0 - 55.0)) as u8;
                 let g = (57.0 + brightness * (179.0 - 57.0)) as u8;
@@ -204,7 +201,6 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 Color::Rgb(r, g, b)
             };
 
-            // Pick frame based on brightness for expansion effect
             let frame_idx = (brightness * (INF_FRAMES.len() - 1) as f32) as usize;
             let inf_frame = &INF_FRAMES[frame_idx.min(INF_FRAMES.len() - 1)];
 

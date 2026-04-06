@@ -6,13 +6,13 @@ use cpal::Stream;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 
-use crate::noise::{NoiseMix, NoiseGen};
+use crate::noise::{NoiseMix, NoiseGen, RainGen};
 
 pub struct AudioState {
     pub volume: Mutex<f32>,
     pub target_volume: Mutex<f32>,
     pub paused: AtomicBool,
-    pub noise_type: AtomicU8, // 0=white, 1=pink, 2=brown, 3=focus, 4=sleep, 5=deep
+    pub noise_type: AtomicU8, // 0=white, 1=pink, 2=brown, 3=focus, 4=sleep, 5=deep, 6=theta, 7=zen, 8=rain, 9=storm
     pub pending_switch: AtomicBool,
     pub binaural_freq: Mutex<f32>, // 0.0 = off
     pub binaural_base: Mutex<f32>, // base tone frequency
@@ -40,18 +40,18 @@ impl AudioState {
     }
 }
 
-/// Returns (NoiseMix, Option<(binaural_freq, binaural_base)>)
-fn mix_for_type(t: u8) -> (NoiseMix, Option<(f32, f32)>) {
+/// Returns (NoiseMix, Option<(binaural_freq, binaural_base)>, is_rain, rain_density)
+fn mix_for_type(t: u8) -> (NoiseMix, Option<(f32, f32)>, bool, f32) {
     match t {
-        0 => (NoiseMix::white(), None),
-        1 => (NoiseMix::pink(), None),
-        2 => (NoiseMix::brown(), None),
-        3 => (NoiseMix { white: 0.0, pink: 0.8, brown: 0.2 }, Some((2.0, 80.0))),   // focus: slow bin, low tone
-        4 => (NoiseMix { white: 0.0, pink: 0.1, brown: 0.9 }, Some((0.5, 60.0))),   // sleep: very slow, deep
-        5 => (NoiseMix { white: 0.0, pink: 0.4, brown: 0.6 }, Some((1.0, 70.0))),   // deep: slow, low
-        6 => (NoiseMix::brown(), Some((4.0, 80.0))),                                  // theta: 4Hz, low tone
-        7 => (NoiseMix { white: 0.0, pink: 0.3, brown: 0.7 }, Some((0.3, 50.0))),   // zen: very slow, very deep
-        _ => (NoiseMix::brown(), None),
+        0 => (NoiseMix::white(), None, false, 0.0),
+        1 => (NoiseMix::pink(), None, false, 0.0),
+        2 => (NoiseMix::brown(), None, false, 0.0),
+        3 => (NoiseMix { white: 0.0, pink: 0.8, brown: 0.2 }, Some((2.0, 80.0)), false, 0.0),
+        4 => (NoiseMix { white: 0.0, pink: 0.1, brown: 0.9 }, Some((0.5, 60.0)), false, 0.0),
+        5 => (NoiseMix { white: 0.0, pink: 0.4, brown: 0.6 }, Some((1.0, 70.0)), false, 0.0),
+        6 => (NoiseMix::brown(), Some((4.0, 80.0)), false, 0.0),
+        7 => (NoiseMix { white: 0.0, pink: 0.3, brown: 0.7 }, Some((0.3, 50.0)), false, 0.0),
+        _ => (NoiseMix::brown(), None, false, 0.0),
     }
 }
 
@@ -69,13 +69,15 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
 
     let mut rng = SmallRng::from_entropy();
     let mut gen = NoiseGen::new();
-    let (init_mix, init_bin) = mix_for_type(state.noise_type.load(Ordering::Relaxed));
+    let (init_mix, init_bin, init_rain, init_density) = mix_for_type(state.noise_type.load(Ordering::Relaxed));
     if let Some((freq, base)) = init_bin {
         *state.binaural_freq.lock().unwrap() = freq;
         *state.binaural_base.lock().unwrap() = base;
     }
     let mut current_mix = init_mix;
     let mut target_mix = current_mix;
+    let mut rain_active = init_rain;
+    let mut rain_gen = RainGen::new(sample_rate, init_density);
     let mut crossfade_progress = 1.0f32; // 1.0 = complete
 
     // Stereo LFO state — slightly different phase for L and R
@@ -108,12 +110,16 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
 
             // Check for noise type switch
             if state.pending_switch.load(Ordering::Relaxed) {
-                let (new_mix, new_bin) = mix_for_type(state.noise_type.load(Ordering::Relaxed));
+                let (new_mix, new_bin, new_rain, new_density) = mix_for_type(state.noise_type.load(Ordering::Relaxed));
                 target_mix = new_mix;
+                rain_active = new_rain;
+                if new_rain {
+                    rain_gen = RainGen::new(sample_rate, new_density);
+                }
                 if let Some((freq, base)) = new_bin {
                     *state.binaural_freq.lock().unwrap() = freq;
                     *state.binaural_base.lock().unwrap() = base;
-                } else {
+                } else if !new_rain {
                     *state.binaural_freq.lock().unwrap() = 0.0;
                 }
                 crossfade_progress = 0.0;
@@ -168,7 +174,11 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                     current_mix
                 };
 
-                let (l, r) = gen.sample(&mut rng, &mix);
+                let (l, r) = if rain_active {
+                    rain_gen.sample(&mut rng)
+                } else {
+                    gen.sample(&mut rng, &mix)
+                };
 
                 // Stereo LFO modulation
                 let lfo_l = 1.0 + (lfo_phase_l * std::f32::consts::TAU).sin() * lfo_depth;
