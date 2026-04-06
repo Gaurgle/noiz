@@ -8,25 +8,49 @@ use ratatui::widgets::{Block, Borders, Padding, Paragraph};
 
 use crate::audio::AudioState;
 
-const NOISE_NAMES: [&str; 6] = ["white", "pink", "brown", "focus", "sleep", "deep"];
-const NOISE_DESCRIPTIONS: [&str; 6] = [
+const NOISE_NAMES: [&str; 8] = ["white", "pink", "brown", "focus", "sleep", "deep", "theta", "zen"];
+const NOISE_DESCRIPTIONS: [&str; 8] = [
     "equal energy, bright",
     "natural, balanced",
     "deep, warm rumble",
-    "pink+brown, present",
-    "mostly brown, dark",
-    "pink+brown, full",
+    "pink+brown, 2Hz bin @80",
+    "brown, 0.5Hz bin @60",
+    "pink+brown, 1Hz bin @70",
+    "brown, 4Hz theta @80",
+    "deep, 0.3Hz bin @50",
+];
+
+// Infinity symbol frames — 2D breathing animation (5 states, 3 rows each)
+const INF_FRAMES: [[&str; 3]; 5] = [
+    ["       ·    ·       ",
+     "      · ·  · ·      ",
+     "       ·    ·       "],
+    ["      ·      ·      ",
+     "    ·  ·    ·  ·    ",
+     "      ·      ·      "],
+    ["     ·        ·     ",
+     "   ·    ·  ·    ·   ",
+     "     ·        ·     "],
+    ["    ·          ·    ",
+     "  ·    ··  ··    ·  ",
+     "    ·          ·    "],
+    ["   ·            ·   ",
+     " ·     ·∞∞·     ·  ",
+     "   ·            ·   "],
 ];
 
 pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = ratatui::init();
     terminal.clear()?;
+    let start_time = Instant::now();
 
     loop {
         let paused = state.paused.load(Ordering::Relaxed);
         let volume = *state.volume.lock().unwrap();
         let noise_idx = state.noise_type.load(Ordering::Relaxed) as usize;
         let binaural = *state.binaural_freq.lock().unwrap();
+        let bin_base = *state.binaural_base.lock().unwrap();
+        let bin_vol = *state.binaural_vol.lock().unwrap();
         let modulation = *state.modulation_depth.lock().unwrap();
         let noise_name = NOISE_NAMES.get(noise_idx).unwrap_or(&"?");
         let noise_desc = NOISE_DESCRIPTIONS.get(noise_idx).unwrap_or(&"");
@@ -95,20 +119,24 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             lines.push(Line::from(Span::styled("  ─────────────────────────────────", Style::default().fg(subtle))));
 
             // Source selector — compact, clear active state
-            let mut type_line: Vec<Span> = vec![Span::styled("  ", Style::default())];
-            for (i, name) in NOISE_NAMES.iter().enumerate() {
-                let key = format!("{}", i + 1);
-                let is_active = i == noise_idx;
-                let sep = if i < NOISE_NAMES.len() - 1 { "  " } else { "" };
-                if is_active {
-                    type_line.push(Span::styled(key, Style::default().fg(blue).add_modifier(Modifier::BOLD)));
-                    type_line.push(Span::styled(format!(" {name}{sep}"), Style::default().fg(text)));
-                } else {
-                    type_line.push(Span::styled(key, Style::default().fg(surface)));
-                    type_line.push(Span::styled(format!(" {name}{sep}"), Style::default().fg(surface)));
+            for row_start in [0usize, 4] {
+                let mut type_line: Vec<Span> = vec![Span::styled("  ", Style::default())];
+                let row_end = (row_start + 4).min(NOISE_NAMES.len());
+                for i in row_start..row_end {
+                    let name = NOISE_NAMES[i];
+                    let key = format!("{}", i + 1);
+                    let is_active = i == noise_idx;
+                    let sep = if i < row_end - 1 { "  " } else { "" };
+                    if is_active {
+                        type_line.push(Span::styled(key, Style::default().fg(blue).add_modifier(Modifier::BOLD)));
+                        type_line.push(Span::styled(format!(" {name}{sep}"), Style::default().fg(text)));
+                    } else {
+                        type_line.push(Span::styled(key, Style::default().fg(surface)));
+                        type_line.push(Span::styled(format!(" {name}{sep}"), Style::default().fg(surface)));
+                    }
                 }
+                lines.push(Line::from(type_line));
             }
-            lines.push(Line::from(type_line));
 
             lines.push(Line::from(""));
 
@@ -130,10 +158,16 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             if binaural > 0.0 || timer_str.is_some() {
                 lines.push(Line::from(""));
                 if binaural > 0.0 {
+                    let bin_display = if binaural < 1.0 {
+                        format!("{binaural:.1} Hz")
+                    } else {
+                        format!("{binaural:.0} Hz")
+                    };
                     lines.push(Line::from(vec![
                         Span::styled("  bin ", Style::default().fg(dim)),
-                        Span::styled(format!("{binaural:.0} Hz"), Style::default().fg(peach)),
-                        Span::styled("  binaural beat", Style::default().fg(subtle)),
+                        Span::styled(bin_display, Style::default().fg(peach)),
+                        Span::styled(format!("  tone {bin_base:.0} Hz"), Style::default().fg(subtle)),
+                        Span::styled(format!("  vol {:.0}%", bin_vol * 100.0), Style::default().fg(subtle)),
                     ]));
                 }
                 if let Some(ref t) = timer_str {
@@ -145,19 +179,66 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 }
             }
 
+            // Visualizer — infinity symbol pulsing with binaural or LFO
+            let elapsed = start_time.elapsed().as_secs_f32();
+            let pulse_rate = if binaural > 0.0 {
+                // Divide binaural freq to visually comfortable range (0.5-2 Hz)
+                (binaural / 4.0).clamp(0.5, 2.0)
+            } else {
+                0.04 // match LFO rate
+            };
+            let phase = (elapsed * pulse_rate * std::f32::consts::TAU).sin();
+            // Map sine (-1..1) to brightness (0.0..1.0)
+            let brightness = (phase + 1.0) / 2.0;
+
+            // Interpolate color between subtle and active
+            let vis_color = if binaural > 0.0 {
+                let r = (55.0 + brightness * (250.0 - 55.0)) as u8;
+                let g = (57.0 + brightness * (179.0 - 57.0)) as u8;
+                let b = (75.0 + brightness * (135.0 - 75.0)) as u8;
+                Color::Rgb(r, g, b)
+            } else {
+                let r = (55.0 + brightness * (203.0 - 55.0)) as u8;
+                let g = (57.0 + brightness * (166.0 - 57.0)) as u8;
+                let b = (75.0 + brightness * (247.0 - 75.0)) as u8;
+                Color::Rgb(r, g, b)
+            };
+
+            // Pick frame based on brightness for expansion effect
+            let frame_idx = (brightness * (INF_FRAMES.len() - 1) as f32) as usize;
+            let inf_frame = &INF_FRAMES[frame_idx.min(INF_FRAMES.len() - 1)];
+
+            lines.push(Line::from(""));
+            for row in inf_frame {
+                lines.push(Line::from(Span::styled(
+                    format!("  {row}"),
+                    Style::default().fg(vis_color),
+                )));
+            }
+
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled("  ─────────────────────────────────", Style::default().fg(subtle))));
 
             // Keybindings — grouped logically
             lines.push(Line::from(vec![
                 Span::styled("  ↑↓", Style::default().fg(blue)),
-                Span::styled(" vol   ", Style::default().fg(dim)),
+                Span::styled(" vol  ", Style::default().fg(dim)),
                 Span::styled("[]", Style::default().fg(mauve)),
-                Span::styled(" mod   ", Style::default().fg(dim)),
+                Span::styled(" mod  ", Style::default().fg(dim)),
+                Span::styled("b", Style::default().fg(peach)),
+                Span::styled("in  ", Style::default().fg(dim)),
                 Span::styled("space", Style::default().fg(green)),
-                Span::styled(" pause   ", Style::default().fg(dim)),
+                Span::styled(" pause  ", Style::default().fg(dim)),
                 Span::styled("q", Style::default().fg(red)),
                 Span::styled("uit", Style::default().fg(dim)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  ←→", Style::default().fg(peach)),
+                Span::styled(" hz   ", Style::default().fg(dim)),
+                Span::styled("+-", Style::default().fg(peach)),
+                Span::styled(" pitch  ", Style::default().fg(dim)),
+                Span::styled("<>", Style::default().fg(peach)),
+                Span::styled(" bin vol", Style::default().fg(dim)),
             ]));
 
             let block = Block::default()
@@ -206,6 +287,47 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                         let mut m = state.modulation_depth.lock().unwrap();
                         *m = (*m - 0.02).max(0.0);
                     }
+                    KeyCode::Char('b') => {
+                        let mut b = state.binaural_freq.lock().unwrap();
+                        if *b == 0.0 {
+                            *b = 4.0;
+                        } else {
+                            *b = 0.0;
+                        }
+                    }
+                    KeyCode::Right => {
+                        let mut b = state.binaural_freq.lock().unwrap();
+                        if *b > 0.0 {
+                            let step = if *b < 1.0 { 0.1 } else { 1.0 };
+                            *b = (*b + step).min(20.0);
+                        }
+                    }
+                    KeyCode::Left => {
+                        let mut b = state.binaural_freq.lock().unwrap();
+                        if *b > 0.0 {
+                            let step = if *b <= 1.0 { 0.1 } else { 1.0 };
+                            *b = ((*b - step) * 10.0).round() / 10.0; // avoid float drift
+                            if *b < 0.1 { *b = 0.1; }
+                        }
+                    }
+                    KeyCode::Char('+') | KeyCode::Char('=') => {
+                        let mut base = state.binaural_base.lock().unwrap();
+                        let step = if *base < 60.0 { 2.0 } else { 10.0 };
+                        *base = (*base + step).min(300.0);
+                    }
+                    KeyCode::Char('-') => {
+                        let mut base = state.binaural_base.lock().unwrap();
+                        let step = if *base <= 60.0 { 2.0 } else { 10.0 };
+                        *base = (*base - step).max(20.0);
+                    }
+                    KeyCode::Char('>') | KeyCode::Char('.') => {
+                        let mut v = state.binaural_vol.lock().unwrap();
+                        *v = (*v + 0.05).min(1.0);
+                    }
+                    KeyCode::Char('<') | KeyCode::Char(',') => {
+                        let mut v = state.binaural_vol.lock().unwrap();
+                        *v = (*v - 0.05).max(0.0);
+                    }
                     KeyCode::Char('1') => {
                         state.noise_type.store(0, Ordering::Relaxed);
                         state.pending_switch.store(true, Ordering::Relaxed);
@@ -228,6 +350,14 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                     }
                     KeyCode::Char('6') => {
                         state.noise_type.store(5, Ordering::Relaxed);
+                        state.pending_switch.store(true, Ordering::Relaxed);
+                    }
+                    KeyCode::Char('7') => {
+                        state.noise_type.store(6, Ordering::Relaxed);
+                        state.pending_switch.store(true, Ordering::Relaxed);
+                    }
+                    KeyCode::Char('8') => {
+                        state.noise_type.store(7, Ordering::Relaxed);
                         state.pending_switch.store(true, Ordering::Relaxed);
                     }
                     _ => {}

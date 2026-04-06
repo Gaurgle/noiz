@@ -15,6 +15,8 @@ pub struct AudioState {
     pub noise_type: AtomicU8, // 0=white, 1=pink, 2=brown, 3=focus, 4=sleep, 5=deep
     pub pending_switch: AtomicBool,
     pub binaural_freq: Mutex<f32>, // 0.0 = off
+    pub binaural_base: Mutex<f32>, // base tone frequency
+    pub binaural_vol: Mutex<f32>,  // 0.0 - 1.0
     pub modulation_depth: Mutex<f32>, // 0.0 - 0.20
     pub fade_out: AtomicBool,
     pub fade_out_duration: Mutex<f32>, // seconds
@@ -29,6 +31,8 @@ impl AudioState {
             noise_type: AtomicU8::new(2), // default brown
             pending_switch: AtomicBool::new(false),
             binaural_freq: Mutex::new(0.0),
+            binaural_base: Mutex::new(120.0),
+            binaural_vol: Mutex::new(0.55),
             modulation_depth: Mutex::new(0.08), // default ±8%
             fade_out: AtomicBool::new(false),
             fade_out_duration: Mutex::new(0.75), // default 750ms
@@ -36,15 +40,18 @@ impl AudioState {
     }
 }
 
-fn mix_for_type(t: u8) -> NoiseMix {
+/// Returns (NoiseMix, Option<(binaural_freq, binaural_base)>)
+fn mix_for_type(t: u8) -> (NoiseMix, Option<(f32, f32)>) {
     match t {
-        0 => NoiseMix::white(),
-        1 => NoiseMix::pink(),
-        2 => NoiseMix::brown(),
-        3 => NoiseMix { white: 0.0, pink: 0.8, brown: 0.2 },  // focus
-        4 => NoiseMix { white: 0.0, pink: 0.1, brown: 0.9 },  // sleep
-        5 => NoiseMix { white: 0.0, pink: 0.4, brown: 0.6 },  // deep
-        _ => NoiseMix::pink(),
+        0 => (NoiseMix::white(), None),
+        1 => (NoiseMix::pink(), None),
+        2 => (NoiseMix::brown(), None),
+        3 => (NoiseMix { white: 0.0, pink: 0.8, brown: 0.2 }, Some((2.0, 80.0))),   // focus: slow bin, low tone
+        4 => (NoiseMix { white: 0.0, pink: 0.1, brown: 0.9 }, Some((0.5, 60.0))),   // sleep: very slow, deep
+        5 => (NoiseMix { white: 0.0, pink: 0.4, brown: 0.6 }, Some((1.0, 70.0))),   // deep: slow, low
+        6 => (NoiseMix::brown(), Some((4.0, 80.0))),                                  // theta: 4Hz, low tone
+        7 => (NoiseMix { white: 0.0, pink: 0.3, brown: 0.7 }, Some((0.3, 50.0))),   // zen: very slow, very deep
+        _ => (NoiseMix::brown(), None),
     }
 }
 
@@ -62,7 +69,12 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
 
     let mut rng = SmallRng::from_entropy();
     let mut gen = NoiseGen::new();
-    let mut current_mix = mix_for_type(state.noise_type.load(Ordering::Relaxed));
+    let (init_mix, init_bin) = mix_for_type(state.noise_type.load(Ordering::Relaxed));
+    if let Some((freq, base)) = init_bin {
+        *state.binaural_freq.lock().unwrap() = freq;
+        *state.binaural_base.lock().unwrap() = base;
+    }
+    let mut current_mix = init_mix;
     let mut target_mix = current_mix;
     let mut crossfade_progress = 1.0f32; // 1.0 = complete
 
@@ -74,7 +86,7 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
     // Binaural oscillator phase
     let mut bin_phase_l: f32 = 0.0;
     let mut bin_phase_r: f32 = 0.0;
-    let bin_base_freq = 200.0f32;
+    // bin_base_freq read dynamically from state
 
     // Start at zero and ramp up (fade-in)
     let mut current_vol: f32 = 0.0;
@@ -96,7 +108,14 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
 
             // Check for noise type switch
             if state.pending_switch.load(Ordering::Relaxed) {
-                target_mix = mix_for_type(state.noise_type.load(Ordering::Relaxed));
+                let (new_mix, new_bin) = mix_for_type(state.noise_type.load(Ordering::Relaxed));
+                target_mix = new_mix;
+                if let Some((freq, base)) = new_bin {
+                    *state.binaural_freq.lock().unwrap() = freq;
+                    *state.binaural_base.lock().unwrap() = base;
+                } else {
+                    *state.binaural_freq.lock().unwrap() = 0.0;
+                }
                 crossfade_progress = 0.0;
                 state.pending_switch.store(false, Ordering::Relaxed);
             }
@@ -162,10 +181,17 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
 
                 // Binaural beat — low sine layered under noise
                 if binaural > 0.0 {
-                    let freq_l = bin_base_freq;
-                    let freq_r = bin_base_freq + binaural;
-                    out_l += (bin_phase_l * std::f32::consts::TAU).sin() * 0.15;
-                    out_r += (bin_phase_r * std::f32::consts::TAU).sin() * 0.15;
+                    let base = *state.binaural_base.lock().unwrap();
+                    let freq_l = base;
+                    let freq_r = base + binaural;
+                    let bin_vol = *state.binaural_vol.lock().unwrap();
+                    // Fundamental + soft octave harmonic for body
+                    let sin_l = (bin_phase_l * std::f32::consts::TAU).sin();
+                    let sin_r = (bin_phase_r * std::f32::consts::TAU).sin();
+                    let harm_l = (bin_phase_l * 2.0 * std::f32::consts::TAU).sin() * 0.3;
+                    let harm_r = (bin_phase_r * 2.0 * std::f32::consts::TAU).sin() * 0.3;
+                    out_l += (sin_l + harm_l) * bin_vol;
+                    out_r += (sin_r + harm_r) * bin_vol;
                     bin_phase_l = (bin_phase_l + freq_l / sample_rate) % 1.0;
                     bin_phase_r = (bin_phase_r + freq_r / sample_rate) % 1.0;
                 }

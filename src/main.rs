@@ -38,7 +38,9 @@ fn parse_noise_type(s: &str) -> u8 {
         "focus" | "f" => 3,
         "sleep" | "s" => 4,
         "deep" | "d" => 5,
-        _ => 1, // default pink
+        "theta" | "t" => 6,
+        "zen" | "z" => 7,
+        _ => 2, // default brown
     }
 }
 

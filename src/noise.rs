@@ -47,17 +47,20 @@ impl PinkNoise {
 /// Brown noise — integrated white noise with drift limiting
 pub struct BrownNoise {
     value: f32,
+    lp: f32, // single-pole lowpass state
 }
 
 impl BrownNoise {
     pub fn new() -> Self {
-        Self { value: 0.0 }
+        Self { value: 0.0, lp: 0.0 }
     }
 
     pub fn sample(&mut self, rng: &mut impl Rng) -> f32 {
-        let step: f32 = rng.gen_range(-0.05..0.05);
-        self.value = (self.value + step).clamp(-1.0, 1.0);
-        self.value
+        let step: f32 = rng.gen_range(-0.12..0.12);
+        self.value = (self.value + step).clamp(-0.8, 0.8);
+        // Single-pole lowpass to cut top-end. Lower coeff = darker
+        self.lp += 0.06 * (self.value - self.lp);
+        self.lp
     }
 }
 
@@ -86,8 +89,8 @@ impl NoiseGen {
 
         if mix.white > 0.0 {
             // White noise has more perceived energy than pink/brown, scale down to balance
-            l += WhiteNoise::sample(rng) * mix.white * 0.5;
-            r += WhiteNoise::sample(rng) * mix.white * 0.5;
+            l += WhiteNoise::sample(rng) * mix.white * 0.35;
+            r += WhiteNoise::sample(rng) * mix.white * 0.35;
         }
         if mix.pink > 0.0 {
             l += self.pink_l.sample(rng) * mix.pink;
