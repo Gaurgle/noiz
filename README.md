@@ -9,7 +9,7 @@
 
 Terminal noise generator for focus and concentration.
 
-Real-time stereo noise synthesis with binaural brainwave presets, rain overlay, smooth crossfading, subtle modulation, and a minimal TUI. No audio files for noise — everything is generated on the fly.
+Real-time stereo noise synthesis with binaural brainwave presets, rain overlay, smooth crossfading, subtle modulation, and a minimal TUI. Noise and binaural tones are generated in real-time — rain uses looping wav samples.
 
 ## Install
 
