@@ -7,12 +7,15 @@ use rand::rngs::SmallRng;
 use rand::SeedableRng;
 
 use crate::noise::{NoiseMix, NoiseGen};
+use crate::samples;
 
 pub struct AudioState {
     pub volume: Mutex<f32>,
     pub target_volume: Mutex<f32>,
     pub paused: AtomicBool,
-    pub noise_type: AtomicU8, // 0=white, 1=pink, 2=brown, 3=focus, 4=sleep, 5=deep, 6=theta, 7=zen, 8=rain, 9=storm
+    pub noise_type: AtomicU8, // 0-2=noise, 3-7=binaural
+    pub rain_type: AtomicU8,  // 0=off, 1=light, 2=calm, 3=heavy
+    pub rain_pending: AtomicBool,
     pub pending_switch: AtomicBool,
     pub binaural_freq: Mutex<f32>, // 0.0 = off
     pub binaural_base: Mutex<f32>, // base tone frequency
@@ -33,6 +36,8 @@ impl AudioState {
             binaural_freq: Mutex::new(0.0),
             binaural_base: Mutex::new(120.0),
             binaural_vol: Mutex::new(0.55),
+            rain_type: AtomicU8::new(0),
+            rain_pending: AtomicBool::new(false),
             modulation_depth: Mutex::new(0.08), // default ±8%
             fade_out: AtomicBool::new(false),
             fade_out_duration: Mutex::new(0.75), // default 750ms
@@ -40,19 +45,16 @@ impl AudioState {
     }
 }
 
-/// Returns (NoiseMix, Option<(binaural_split, base_tone)>)
 fn mix_for_type(t: u8) -> (NoiseMix, Option<(f32, f32)>) {
     match t {
-        // Raw noise types — no binaural
         0 => (NoiseMix::white(), None),
         1 => (NoiseMix::pink(), None),
         2 => (NoiseMix::brown(), None),
-        // Presets — noise + binaural matched to brainwave bands
-        3 => (NoiseMix { white: 0.0, pink: 0.1, brown: 0.9 }, Some((2.0, 60.0))),   // delta: deep sleep, 2 Hz split
-        4 => (NoiseMix { white: 0.0, pink: 0.3, brown: 0.7 }, Some((6.0, 80.0))),   // theta: meditation, 6 Hz split
-        5 => (NoiseMix { white: 0.0, pink: 0.7, brown: 0.3 }, Some((10.0, 100.0))), // alpha: relaxed focus, 10 Hz split
-        6 => (NoiseMix { white: 0.0, pink: 0.8, brown: 0.2 }, Some((18.0, 120.0))), // beta: active focus, 18 Hz split
-        7 => (NoiseMix::pink(), Some((40.0, 140.0))),                                 // gamma: deep concentration, 40 Hz split
+        3 => (NoiseMix { white: 0.0, pink: 0.1, brown: 0.9 }, Some((2.0, 60.0))),
+        4 => (NoiseMix { white: 0.0, pink: 0.3, brown: 0.7 }, Some((6.0, 80.0))),
+        5 => (NoiseMix { white: 0.0, pink: 0.7, brown: 0.3 }, Some((10.0, 100.0))),
+        6 => (NoiseMix { white: 0.0, pink: 0.8, brown: 0.2 }, Some((18.0, 120.0))),
+        7 => (NoiseMix::pink(), Some((40.0, 140.0))),
         _ => (NoiseMix::brown(), None),
     }
 }
@@ -78,6 +80,17 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
     }
     let mut current_mix = init_mix;
     let mut target_mix = current_mix;
+
+    // Preload all rain samples before starting the stream
+    let rain_samples: [Option<samples::Sample>; 3] = [
+        samples::load_sample(1),
+        samples::load_sample(2),
+        samples::load_sample(3),
+    ];
+
+    let mut rain_player: Option<samples::SamplePlayer> = None;
+    let mut rain_outgoing: Option<samples::SamplePlayer> = None;
+    let rain_volume = 0.35f32;
     let mut crossfade_progress = 1.0f32; // 1.0 = complete
 
     // Stereo LFO state — slightly different phase for L and R
@@ -98,6 +111,9 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
 
     // Fade-in envelope
     let mut fade_in_vol = 0.0f32;
+
+    // Pause fade envelope
+    let mut pause_vol = 1.0f32;
 
     let stream = device.build_output_stream(
         &stream_config,
@@ -120,6 +136,30 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                 }
                 crossfade_progress = 0.0;
                 state.pending_switch.store(false, Ordering::Relaxed);
+            }
+
+            // Check for rain toggle
+            if state.rain_pending.load(Ordering::Relaxed) {
+                let rt = state.rain_type.load(Ordering::Relaxed);
+                // Move current player to outgoing (fade out)
+                if let Some(mut current) = rain_player.take() {
+                    current.fading_out = true;
+                    current.fading_in = false;
+                    rain_outgoing = Some(current);
+                }
+                // Create new player from preloaded sample
+                if rt > 0 {
+                    let idx = (rt - 1) as usize;
+                    if let Some(ref sample) = rain_samples[idx] {
+                        rain_player = Some(samples::SamplePlayer::from_preloaded(sample, 2000.0));
+                    }
+                }
+                state.rain_pending.store(false, Ordering::Relaxed);
+            }
+
+            // Clean up silent outgoing
+            if rain_outgoing.as_ref().map_or(false, |p| p.is_silent()) {
+                rain_outgoing = None;
             }
 
             let crossfade_speed = 1.0 / (sample_rate * 2.0); // 2 second crossfade
@@ -149,7 +189,14 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                     }
                 }
 
+                // Pause fade (0.4s)
+                let pause_speed = 1.0 / (sample_rate * 0.4);
                 if paused {
+                    pause_vol = (pause_vol - pause_speed).max(0.0);
+                } else {
+                    pause_vol = (pause_vol + pause_speed).min(1.0);
+                }
+                if pause_vol <= 0.0 {
                     for sample in frame.iter_mut() {
                         *sample = 0.0;
                     }
@@ -170,7 +217,19 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                     current_mix
                 };
 
-                let (l, r) = gen.sample(&mut rng, &mix);
+                let (mut l, mut r) = gen.sample(&mut rng, &mix);
+
+                // Mix in rain (current + outgoing for crossfade)
+                if let Some(ref mut player) = rain_player {
+                    let (rl, rr) = player.next_stereo(sample_rate);
+                    l += rl * rain_volume;
+                    r += rr * rain_volume;
+                }
+                if let Some(ref mut player) = rain_outgoing {
+                    let (rl, rr) = player.next_stereo(sample_rate);
+                    l += rl * rain_volume;
+                    r += rr * rain_volume;
+                }
 
                 // Stereo LFO modulation
                 let lfo_l = 1.0 + (lfo_phase_l * std::f32::consts::TAU).sin() * lfo_depth;
@@ -198,7 +257,7 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                     bin_phase_r = (bin_phase_r + freq_r / sample_rate) % 1.0;
                 }
 
-                let vol = current_vol * fade_in_vol * fade_out_vol;
+                let vol = current_vol * fade_in_vol * fade_out_vol * pause_vol;
                 let final_l = (out_l * vol).clamp(-1.0, 1.0);
                 let final_r = (out_r * vol).clamp(-1.0, 1.0);
 

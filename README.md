@@ -9,7 +9,7 @@
 
 Terminal noise generator for focus and concentration.
 
-Real-time stereo noise synthesis with binaural brainwave presets, smooth crossfading, subtle modulation, and a minimal TUI. No audio files — everything is generated on the fly.
+Real-time stereo noise synthesis with binaural brainwave presets, rain overlay, smooth crossfading, subtle modulation, and a minimal TUI. No audio files for noise — everything is generated on the fly.
 
 ## Install
 
@@ -39,11 +39,16 @@ noiz pink -v 0.7        # set volume (0.0–1.0)
 
 | Key | Action |
 |-----|--------|
-| `1`–`3` | Noise type: white, pink, brown |
-| `4`–`8` | Binaural presets: delta, theta, alpha, beta, gamma |
-| `↑` / `↓` | Volume up/down |
-| `[` / `]` | Modulation depth up/down |
-| `space` | Pause/resume |
+| `1`-`3` | Noise type: white, pink, brown |
+| `4`-`8` | Binaural presets: delta, theta, alpha, beta, gamma |
+| `↑` / `↓` | Volume (1% steps) |
+| `[` / `]` | Modulation depth |
+| `b` | Toggle binaural on/off |
+| `←` / `→` | Binaural split frequency (0.1-40 Hz) |
+| `+` / `-` | Binaural base tone (20-300 Hz) |
+| `<` / `>` | Binaural volume |
+| `r` | Cycle rain overlay: off → light → calm → heavy → off |
+| `space` | Pause/resume (0.4s fade) |
 | `q` / `Esc` / `Ctrl+C` | Quit (750ms fade out) |
 
 ## Noise Types
@@ -62,22 +67,37 @@ Each preset pairs a noise mix with a binaural beat tuned to a specific brainwave
 
 | Preset | Brainwave | Split | Tone | Noise Mix | Effect |
 |--------|-----------|-------|------|-----------|--------|
-| **delta** | 1–4 Hz | 2 Hz | 60 Hz | 10% pink + 90% brown | Deep sleep, healing |
-| **theta** | 4–8 Hz | 6 Hz | 80 Hz | 30% pink + 70% brown | Meditation, creativity |
-| **alpha** | 8–14 Hz | 10 Hz | 100 Hz | 70% pink + 30% brown | Relaxed focus, flow |
-| **beta** | 14–30 Hz | 18 Hz | 120 Hz | 80% pink + 20% brown | Active focus, energy |
-| **gamma** | 30–100 Hz | 40 Hz | 140 Hz | 100% pink | Deep concentration |
+| **delta** | 1-4 Hz | 2 Hz | 60 Hz | 10% pink + 90% brown | Deep sleep, healing |
+| **theta** | 4-8 Hz | 6 Hz | 80 Hz | 30% pink + 70% brown | Meditation, creativity |
+| **alpha** | 8-14 Hz | 10 Hz | 100 Hz | 70% pink + 30% brown | Relaxed focus, flow |
+| **beta** | 14-30 Hz | 18 Hz | 120 Hz | 80% pink + 20% brown | Active focus, energy |
+| **gamma** | 30-100 Hz | 40 Hz | 140 Hz | 100% pink | Deep concentration |
+
+Binaural can also be toggled manually with `b` and fine-tuned with arrow keys, independent of presets.
+
+## Rain Overlay
+
+Press `r` to cycle through rain samples layered on top of any noise/binaural preset:
+
+| Rain | Intensity | Animation |
+|------|-----------|-----------|
+| **light** | Gentle patter | 3 drops |
+| **calm** | Steady rain | 6 drops |
+| **heavy** | Downpour | 10 drops |
+
+Rain samples are wav files loaded from `samples-rain/`. All transitions crossfade smoothly.
 
 ## Features
 
 - **Stereo** — independent noise generators per channel with subtle LFO phase offset for width
 - **Smooth transitions** — 2-second crossfade when switching noise types
-- **Fade in/out** — 750ms fade on start and quit, 5s fade on timer expiry
+- **Fade in/out** — 750ms fade on start and quit, 0.4s fade on pause, 5s fade on timer expiry
 - **Modulation** — adjustable slow LFO on volume (different phase per channel) to prevent static feel
-- **Binaural beats** — discrete L/R sine tones with octave harmonic, matched to brainwave frequency bands
-- **Visualizer** — infinity symbol that breathes in sync with the binaural frequency
+- **Binaural beats** — discrete L/R sine tones with octave harmonic, preset or manual control
+- **Rain overlay** — looping wav samples with crossfade, layered on any preset
+- **Visualizer** — infinity symbol breathing with binaural, rain drops animated by intensity
 - **Timer** — supports `30s`, `45m`, `1h` durations with automatic fade out
 
 ## Stack
 
-Rust, [cpal](https://github.com/RustAudio/cpal), [ratatui](https://github.com/ratatui/ratatui), [crossterm](https://github.com/crossterm-rs/crossterm)
+Rust, [cpal](https://github.com/RustAudio/cpal), [ratatui](https://github.com/ratatui/ratatui), [crossterm](https://github.com/crossterm-rs/crossterm), [hound](https://github.com/ruuda/hound)

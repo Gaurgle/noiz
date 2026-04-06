@@ -19,6 +19,7 @@ const NOISE_DESCRIPTIONS: [&str; 8] = [
     "active focus, energy",
     "deep concentration",
 ];
+const RAIN_NAMES: [&str; 3] = ["light", "calm", "heavy"];
 
 // Infinity symbol frames — 2D breathing animation (5 states, 3 rows each)
 const INF_FRAMES: [[&str; 3]; 5] = [
@@ -42,7 +43,8 @@ const INF_FRAMES: [[&str; 3]; 5] = [
 pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = ratatui::init();
     terminal.clear()?;
-    let start_time = Instant::now();
+    let mut anim_time: f32 = 0.0;
+    let mut last_frame = Instant::now();
 
     loop {
         let paused = state.paused.load(Ordering::Relaxed);
@@ -50,6 +52,8 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
         let noise_idx = state.noise_type.load(Ordering::Relaxed) as usize;
         let binaural = *state.binaural_freq.lock().unwrap();
         let bin_base = *state.binaural_base.lock().unwrap();
+        let bin_vol = *state.binaural_vol.lock().unwrap();
+        let rain_type = state.rain_type.load(Ordering::Relaxed);
         let modulation = *state.modulation_depth.lock().unwrap();
         let noise_name = NOISE_NAMES.get(noise_idx).unwrap_or(&"?");
         let noise_desc = NOISE_DESCRIPTIONS.get(noise_idx).unwrap_or(&"");
@@ -118,12 +122,15 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             lines.push(Line::from(Span::styled("  ─────────────────────────────────", Style::default().fg(subtle))));
 
             // Source selector — compact, clear active state
-            for row_start in [0usize, 4] {
+            for row_start in [0usize, 3] {
                 let mut type_line: Vec<Span> = vec![Span::styled("  ", Style::default())];
-                let row_end = (row_start + 4).min(NOISE_NAMES.len());
+                let row_end = match row_start {
+                    0 => 3,
+                    _ => 8,
+                };
                 for i in row_start..row_end {
                     let name = NOISE_NAMES[i];
-                    let key = format!("{}", (i + 1) % 10); // 10 → 0
+                    let key = format!("{}", i + 1);
                     let is_active = i == noise_idx;
                     let sep = if i < row_end - 1 { "  " } else { "" };
                     if is_active {
@@ -153,7 +160,16 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 Span::styled(format!("  {:>3.0}%", modulation * 100.0), Style::default().fg(dim)),
             ]));
 
-            // Binaural + Timer row (conditional, on same conceptual level)
+            // Rain overlay
+            if rain_type > 0 {
+                let rain_name = RAIN_NAMES.get((rain_type - 1) as usize).unwrap_or(&"?");
+                lines.push(Line::from(vec![
+                    Span::styled("  rain ", Style::default().fg(dim)),
+                    Span::styled(format!("{rain_name}"), Style::default().fg(blue)),
+                ]));
+            }
+
+            // Binaural + Timer row
             if binaural > 0.0 || timer_str.is_some() {
                 lines.push(Line::from(""));
                 if binaural > 0.0 {
@@ -162,11 +178,17 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                         else if binaural <= 14.0 { "alpha" }
                         else if binaural <= 30.0 { "beta" }
                         else { "gamma" };
+                    let bin_display = if binaural < 1.0 {
+                        format!("{binaural:.1} Hz")
+                    } else {
+                        format!("{binaural:.0} Hz")
+                    };
                     lines.push(Line::from(vec![
                         Span::styled("  bin ", Style::default().fg(dim)),
-                        Span::styled(format!("{binaural:.0} Hz "), Style::default().fg(peach)),
+                        Span::styled(format!("{bin_display} "), Style::default().fg(peach)),
                         Span::styled(band, Style::default().fg(peach)),
                         Span::styled(format!("  tone {bin_base:.0} Hz", ), Style::default().fg(subtle)),
+                        Span::styled(format!("  vol {:.0}%", bin_vol * 100.0), Style::default().fg(subtle)),
                     ]));
                 }
                 if let Some(ref t) = timer_str {
@@ -178,8 +200,15 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 }
             }
 
+            // Advance animation time only when playing
+            let now = Instant::now();
+            if !paused {
+                anim_time += (now - last_frame).as_secs_f32();
+            }
+            last_frame = now;
+
             // Visualizer — infinity symbol pulsing with binaural split or LFO
-            let elapsed = start_time.elapsed().as_secs_f32();
+            let elapsed = anim_time;
             let pulse_rate = if binaural > 0.0 {
                 (binaural / 4.0).clamp(0.3, 2.0)
             } else {
@@ -203,12 +232,68 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             let frame_idx = (brightness * (INF_FRAMES.len() - 1) as f32) as usize;
             let inf_frame = &INF_FRAMES[frame_idx.min(INF_FRAMES.len() - 1)];
 
+            // Rain drop animation — intensity varies by rain type
+            // Use multiple overlapping "waves" of drops with prime-based offsets for pseudo-random feel
+            let rain_width = 14;
+            let rain_height = 3;
+            let rain_light = Color::Rgb(100, 170, 220);
+            let rain_mid = Color::Rgb(75, 135, 180);
+            let rain_dim = Color::Rgb(50, 90, 130);
+
+            // Drop configs: (column, speed, phase_offset)
+            // More drops for heavier rain
+            let all_drops: &[(usize, f32, f32)] = &[
+                // Light: 3 drops
+                (1, 1.1, 0.0), (5, 0.8, 0.4), (10, 1.3, 0.7),
+                // Calm adds 3 more
+                (3, 0.9, 0.2), (8, 1.4, 0.5), (12, 0.7, 0.9),
+                // Heavy adds 4 more
+                (0, 1.2, 0.1), (4, 1.6, 0.3), (7, 0.6, 0.6), (11, 1.0, 0.8),
+            ];
+            let drop_count = match rain_type {
+                1 => 3,  // light
+                2 => 6,  // calm
+                3 => 10, // heavy
+                _ => 0,
+            };
+
             lines.push(Line::from(""));
-            for row in inf_frame {
-                lines.push(Line::from(Span::styled(
-                    format!("  {row}"),
-                    Style::default().fg(vis_color),
-                )));
+            for row_idx in 0..rain_height {
+                let mut spans = vec![
+                    Span::styled(format!("  {}", inf_frame[row_idx]), Style::default().fg(vis_color)),
+                ];
+
+                if drop_count > 0 {
+                    let mut rain_chars = vec![(' ', 0u8); rain_width];
+                    for (i, &(col, speed, offset)) in all_drops.iter().take(drop_count).enumerate() {
+                        // Use irrational multipliers for non-repeating patterns
+                        let phase_shift = offset + (i as f32 * 1.618); // golden ratio offset
+                        let drop_phase = (elapsed * speed + phase_shift) % 1.0;
+                        let drop_row = (drop_phase * (rain_height as f32 + 1.0)) as usize;
+                        if col < rain_width {
+                            if drop_row == row_idx {
+                                rain_chars[col] = ('|', 2); // drop
+                            } else if drop_row == row_idx + 1 && rain_chars[col].1 < 1 {
+                                rain_chars[col] = ('·', 1); // splash
+                            }
+                        }
+                    }
+
+                    spans.push(Span::raw("  "));
+                    for (ch, intensity) in &rain_chars {
+                        let color = match intensity {
+                            2 => rain_light,
+                            1 => rain_dim,
+                            _ => rain_mid, // won't show but needed
+                        };
+                        match ch {
+                            '|' | '·' => spans.push(Span::styled(ch.to_string(), Style::default().fg(color))),
+                            _ => spans.push(Span::raw(" ")),
+                        }
+                    }
+                }
+
+                lines.push(Line::from(spans));
             }
 
             lines.push(Line::from(""));
@@ -220,10 +305,22 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 Span::styled(" vol  ", Style::default().fg(dim)),
                 Span::styled("[]", Style::default().fg(mauve)),
                 Span::styled(" mod  ", Style::default().fg(dim)),
+                Span::styled("b", Style::default().fg(peach)),
+                Span::styled("in  ", Style::default().fg(dim)),
+                Span::styled("r", Style::default().fg(blue)),
+                Span::styled("ain  ", Style::default().fg(dim)),
                 Span::styled("space", Style::default().fg(green)),
                 Span::styled(" pause  ", Style::default().fg(dim)),
                 Span::styled("q", Style::default().fg(red)),
                 Span::styled("uit", Style::default().fg(dim)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  ←→", Style::default().fg(peach)),
+                Span::styled(" hz  ", Style::default().fg(dim)),
+                Span::styled("+-", Style::default().fg(peach)),
+                Span::styled(" tone  ", Style::default().fg(dim)),
+                Span::styled("<>", Style::default().fg(peach)),
+                Span::styled(" bin vol", Style::default().fg(dim)),
             ]));
 
             let block = Block::default()
@@ -258,11 +355,11 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                     }
                     KeyCode::Up => {
                         let mut vol = state.target_volume.lock().unwrap();
-                        *vol = (*vol + 0.05).min(1.0);
+                        *vol = (*vol + 0.01).min(1.0);
                     }
                     KeyCode::Down => {
                         let mut vol = state.target_volume.lock().unwrap();
-                        *vol = (*vol - 0.05).max(0.0);
+                        *vol = (*vol - 0.01).max(0.0);
                     }
                     KeyCode::Char(']') => {
                         let mut m = state.modulation_depth.lock().unwrap();
@@ -303,6 +400,49 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                     KeyCode::Char('8') => {
                         state.noise_type.store(7, Ordering::Relaxed);
                         state.pending_switch.store(true, Ordering::Relaxed);
+                    }
+                    KeyCode::Char('r') => {
+                        let current = state.rain_type.load(Ordering::Relaxed);
+                        let next = (current + 1) % 4;
+                        state.rain_type.store(next, Ordering::Relaxed);
+                        state.rain_pending.store(true, Ordering::Relaxed);
+                    }
+                    KeyCode::Char('b') => {
+                        let mut b = state.binaural_freq.lock().unwrap();
+                        if *b == 0.0 { *b = 4.0; } else { *b = 0.0; }
+                    }
+                    KeyCode::Right => {
+                        let mut b = state.binaural_freq.lock().unwrap();
+                        if *b > 0.0 {
+                            let step = if *b < 1.0 { 0.1 } else { 1.0 };
+                            *b = (*b + step).min(40.0);
+                        }
+                    }
+                    KeyCode::Left => {
+                        let mut b = state.binaural_freq.lock().unwrap();
+                        if *b > 0.0 {
+                            let step = if *b <= 1.0 { 0.1 } else { 1.0 };
+                            *b = ((*b - step) * 10.0).round() / 10.0;
+                            if *b < 0.1 { *b = 0.1; }
+                        }
+                    }
+                    KeyCode::Char('+') | KeyCode::Char('=') => {
+                        let mut base = state.binaural_base.lock().unwrap();
+                        let step = if *base < 60.0 { 2.0 } else { 10.0 };
+                        *base = (*base + step).min(300.0);
+                    }
+                    KeyCode::Char('-') => {
+                        let mut base = state.binaural_base.lock().unwrap();
+                        let step = if *base <= 60.0 { 2.0 } else { 10.0 };
+                        *base = (*base - step).max(20.0);
+                    }
+                    KeyCode::Char('>') | KeyCode::Char('.') => {
+                        let mut v = state.binaural_vol.lock().unwrap();
+                        *v = (*v + 0.05).min(1.0);
+                    }
+                    KeyCode::Char('<') | KeyCode::Char(',') => {
+                        let mut v = state.binaural_vol.lock().unwrap();
+                        *v = (*v - 0.05).max(0.0);
                     }
                     _ => {}
                 }

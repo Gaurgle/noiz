@@ -1,5 +1,6 @@
 mod audio;
 mod noise;
+mod samples;
 mod tui;
 
 use std::sync::Arc;
@@ -22,7 +23,7 @@ struct Cli {
     timer: Option<String>,
 
     /// Volume (0.0 - 1.0)
-    #[arg(short, long, default_value = "0.5")]
+    #[arg(short, long, default_value = "0.3")]
     volume: f32,
 
     /// Binaural beat frequency in Hz (0 = off)

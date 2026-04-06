@@ -9,3 +9,4 @@ clap = { version = "4", features = ["derive"] }
 ratatui = "0.29"
 crossterm = "0.28"
 rand = { version = "0.8", features = ["small_rng"] }
+hound = "3.5"
