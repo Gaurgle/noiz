@@ -35,11 +35,11 @@ fn parse_noise_type(s: &str) -> u8 {
         "white" | "w" => 0,
         "pink" | "p" => 1,
         "brown" | "b" => 2,
-        "focus" | "f" => 3,
-        "sleep" | "s" => 4,
-        "deep" | "d" => 5,
-        "theta" | "t" => 6,
-        "zen" | "z" => 7,
+        "delta" | "d" => 3,
+        "theta" | "t" => 4,
+        "alpha" | "a" => 5,
+        "beta" => 6,
+        "gamma" | "g" => 7,
         _ => 2, // default brown
     }
 }

@@ -5,11 +5,11 @@
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Open Source](https://img.shields.io/badge/open%20source-%E2%9D%A4-c4a7e7)
 ![Audio](https://img.shields.io/badge/audio-white%20·%20pink%20·%20brown-89b4fa)
-![Binaural](https://img.shields.io/badge/binaural-0.1--20%20Hz-fab387)
+![Binaural](https://img.shields.io/badge/binaural-delta%20·%20theta%20·%20alpha%20·%20beta%20·%20gamma-fab387)
 
 Terminal noise generator for focus and concentration.
 
-Real-time stereo noise synthesis with smooth crossfading, subtle modulation, binaural beats, and a minimal TUI. No audio files — everything is generated on the fly.
+Real-time stereo noise synthesis with binaural brainwave presets, smooth crossfading, subtle modulation, and a minimal TUI. No audio files — everything is generated on the fly.
 
 ## Install
 
@@ -26,15 +26,13 @@ cp target/release/noiz ~/.local/bin/
 noiz                    # brown noise (default)
 noiz white              # white noise
 noiz pink               # pink noise
-noiz focus              # preset: pink+brown + 2Hz binaural
-noiz sleep              # preset: brown + 0.5Hz binaural
-noiz deep               # preset: pink+brown + 1Hz binaural
-noiz theta              # preset: brown + 4Hz theta binaural
-noiz zen                # preset: deep + 0.3Hz binaural
-noiz pink 45m           # timer — fade out after 45 minutes
-noiz brown -v 0.7       # set volume (0.0–1.0)
-noiz pink -b 4          # binaural beats at 4 Hz
-noiz pink+brown         # mix noise types
+noiz delta              # deep sleep — 2 Hz binaural
+noiz theta              # meditation — 6 Hz binaural
+noiz alpha              # relaxed focus — 10 Hz binaural
+noiz beta               # active focus — 18 Hz binaural
+noiz gamma              # deep concentration — 40 Hz binaural
+noiz brown 45m          # timer — fade out after 45 minutes
+noiz pink -v 0.7        # set volume (0.0–1.0)
 ```
 
 ## Keybindings
@@ -42,13 +40,9 @@ noiz pink+brown         # mix noise types
 | Key | Action |
 |-----|--------|
 | `1`–`3` | Noise type: white, pink, brown |
-| `4`–`8` | Presets: focus, sleep, deep, theta, zen |
+| `4`–`8` | Binaural presets: delta, theta, alpha, beta, gamma |
 | `↑` / `↓` | Volume up/down |
 | `[` / `]` | Modulation depth up/down |
-| `b` | Toggle binaural on/off |
-| `←` / `→` | Binaural pitch split (0.1–20 Hz) |
-| `+` / `-` | Binaural base tone (20–300 Hz) |
-| `<` / `>` | Binaural volume |
 | `space` | Pause/resume |
 | `q` / `Esc` / `Ctrl+C` | Quit (750ms fade out) |
 
@@ -56,19 +50,23 @@ noiz pink+brown         # mix noise types
 
 | Type | Description |
 |------|-------------|
-| **white** | Equal energy across all frequencies — gain-balanced to match perceived loudness |
+| **white** | Equal energy across all frequencies — gain-balanced for perceived loudness |
 | **pink** | Energy drops 3 dB/octave — natural, balanced |
-| **brown** | Energy drops 6 dB/octave — deep, dark, lowpass-filtered for extra warmth |
+| **brown** | Energy drops 6 dB/octave — deep, dark, lowpass-filtered for warmth |
 
-## Presets
+## Binaural Presets
 
-| Preset | Mix | Split | Tone | Character |
-|--------|-----|-------|------|-----------|
-| **focus** | 80% pink + 20% brown | 2 Hz | 80 Hz | Slow, masks distractions |
-| **sleep** | 10% pink + 90% brown | 0.5 Hz | 60 Hz | Very slow, deep |
-| **deep** | 40% pink + 60% brown | 1 Hz | 70 Hz | Dark, full-bodied |
-| **theta** | brown | 4 Hz | 80 Hz | Theta waves, meditation |
-| **zen** | 30% pink + 70% brown | 0.3 Hz | 50 Hz | Extremely slow, deepest |
+Each preset pairs a noise mix with a binaural beat tuned to a specific brainwave band. The binaural effect is created by playing two discrete sine tones — one per ear — with a slight frequency difference. The brain perceives this difference as a rhythmic pulse at the target frequency.
+
+**Requires headphones** — binaural beats do not work over speakers.
+
+| Preset | Brainwave | Split | Tone | Noise Mix | Effect |
+|--------|-----------|-------|------|-----------|--------|
+| **delta** | 1–4 Hz | 2 Hz | 60 Hz | 10% pink + 90% brown | Deep sleep, healing |
+| **theta** | 4–8 Hz | 6 Hz | 80 Hz | 30% pink + 70% brown | Meditation, creativity |
+| **alpha** | 8–14 Hz | 10 Hz | 100 Hz | 70% pink + 30% brown | Relaxed focus, flow |
+| **beta** | 14–30 Hz | 18 Hz | 120 Hz | 80% pink + 20% brown | Active focus, energy |
+| **gamma** | 30–100 Hz | 40 Hz | 140 Hz | 100% pink | Deep concentration |
 
 ## Features
 
@@ -76,8 +74,8 @@ noiz pink+brown         # mix noise types
 - **Smooth transitions** — 2-second crossfade when switching noise types
 - **Fade in/out** — 750ms fade on start and quit, 5s fade on timer expiry
 - **Modulation** — adjustable slow LFO on volume (different phase per channel) to prevent static feel
-- **Binaural beats** — discrete L/R sine tones with configurable pitch split (0.1–20 Hz), base tone (20–300 Hz), and volume. The perceived beat emerges from the frequency difference between ears
-- **Visualizer** — 2D infinity symbol that breathes in sync with binaural modulation
+- **Binaural beats** — discrete L/R sine tones with octave harmonic, matched to brainwave frequency bands
+- **Visualizer** — infinity symbol that breathes in sync with the binaural frequency
 - **Timer** — supports `30s`, `45m`, `1h` durations with automatic fade out
 
 ## Stack

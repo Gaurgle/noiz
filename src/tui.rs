@@ -8,16 +8,16 @@ use ratatui::widgets::{Block, Borders, Padding, Paragraph};
 
 use crate::audio::AudioState;
 
-const NOISE_NAMES: [&str; 8] = ["white", "pink", "brown", "focus", "sleep", "deep", "theta", "zen"];
+const NOISE_NAMES: [&str; 8] = ["white", "pink", "brown", "delta", "theta", "alpha", "beta", "gamma"];
 const NOISE_DESCRIPTIONS: [&str; 8] = [
     "equal energy, bright",
     "natural, balanced",
     "deep, warm rumble",
-    "pink+brown, 2Hz split @80",
-    "brown, 0.5Hz split @60",
-    "pink+brown, 1Hz split @70",
-    "brown, 4Hz theta @80",
-    "deep, 0.3Hz split @50",
+    "deep sleep, healing",
+    "meditation, creativity",
+    "relaxed focus, flow",
+    "active focus, energy",
+    "deep concentration",
 ];
 
 // Infinity symbol frames — 2D breathing animation (5 states, 3 rows each)
@@ -50,7 +50,6 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
         let noise_idx = state.noise_type.load(Ordering::Relaxed) as usize;
         let binaural = *state.binaural_freq.lock().unwrap();
         let bin_base = *state.binaural_base.lock().unwrap();
-        let bin_vol = *state.binaural_vol.lock().unwrap();
         let modulation = *state.modulation_depth.lock().unwrap();
         let noise_name = NOISE_NAMES.get(noise_idx).unwrap_or(&"?");
         let noise_desc = NOISE_DESCRIPTIONS.get(noise_idx).unwrap_or(&"");
@@ -158,16 +157,16 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             if binaural > 0.0 || timer_str.is_some() {
                 lines.push(Line::from(""));
                 if binaural > 0.0 {
-                    let bin_display = if binaural < 1.0 {
-                        format!("{binaural:.1} Hz")
-                    } else {
-                        format!("{binaural:.0} Hz")
-                    };
+                    let band = if binaural <= 4.0 { "delta" }
+                        else if binaural <= 8.0 { "theta" }
+                        else if binaural <= 14.0 { "alpha" }
+                        else if binaural <= 30.0 { "beta" }
+                        else { "gamma" };
                     lines.push(Line::from(vec![
                         Span::styled("  bin ", Style::default().fg(dim)),
-                        Span::styled(bin_display, Style::default().fg(peach)),
-                        Span::styled(format!("  tone {bin_base:.0} Hz"), Style::default().fg(subtle)),
-                        Span::styled(format!("  vol {:.0}%", bin_vol * 100.0), Style::default().fg(subtle)),
+                        Span::styled(format!("{binaural:.0} Hz "), Style::default().fg(peach)),
+                        Span::styled(band, Style::default().fg(peach)),
+                        Span::styled(format!("  tone {bin_base:.0} Hz", ), Style::default().fg(subtle)),
                     ]));
                 }
                 if let Some(ref t) = timer_str {
@@ -221,20 +220,10 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 Span::styled(" vol  ", Style::default().fg(dim)),
                 Span::styled("[]", Style::default().fg(mauve)),
                 Span::styled(" mod  ", Style::default().fg(dim)),
-                Span::styled("b", Style::default().fg(peach)),
-                Span::styled("in  ", Style::default().fg(dim)),
                 Span::styled("space", Style::default().fg(green)),
                 Span::styled(" pause  ", Style::default().fg(dim)),
                 Span::styled("q", Style::default().fg(red)),
                 Span::styled("uit", Style::default().fg(dim)),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled("  ←→", Style::default().fg(peach)),
-                Span::styled(" hz   ", Style::default().fg(dim)),
-                Span::styled("+-", Style::default().fg(peach)),
-                Span::styled(" pitch  ", Style::default().fg(dim)),
-                Span::styled("<>", Style::default().fg(peach)),
-                Span::styled(" bin vol", Style::default().fg(dim)),
             ]));
 
             let block = Block::default()
@@ -282,47 +271,6 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                     KeyCode::Char('[') => {
                         let mut m = state.modulation_depth.lock().unwrap();
                         *m = (*m - 0.02).max(0.0);
-                    }
-                    KeyCode::Char('b') => {
-                        let mut b = state.binaural_freq.lock().unwrap();
-                        if *b == 0.0 {
-                            *b = 4.0;
-                        } else {
-                            *b = 0.0;
-                        }
-                    }
-                    KeyCode::Right => {
-                        let mut b = state.binaural_freq.lock().unwrap();
-                        if *b > 0.0 {
-                            let step = if *b < 1.0 { 0.1 } else { 1.0 };
-                            *b = (*b + step).min(20.0);
-                        }
-                    }
-                    KeyCode::Left => {
-                        let mut b = state.binaural_freq.lock().unwrap();
-                        if *b > 0.0 {
-                            let step = if *b <= 1.0 { 0.1 } else { 1.0 };
-                            *b = ((*b - step) * 10.0).round() / 10.0; // avoid float drift
-                            if *b < 0.1 { *b = 0.1; }
-                        }
-                    }
-                    KeyCode::Char('+') | KeyCode::Char('=') => {
-                        let mut base = state.binaural_base.lock().unwrap();
-                        let step = if *base < 60.0 { 2.0 } else { 10.0 };
-                        *base = (*base + step).min(300.0);
-                    }
-                    KeyCode::Char('-') => {
-                        let mut base = state.binaural_base.lock().unwrap();
-                        let step = if *base <= 60.0 { 2.0 } else { 10.0 };
-                        *base = (*base - step).max(20.0);
-                    }
-                    KeyCode::Char('>') | KeyCode::Char('.') => {
-                        let mut v = state.binaural_vol.lock().unwrap();
-                        *v = (*v + 0.05).min(1.0);
-                    }
-                    KeyCode::Char('<') | KeyCode::Char(',') => {
-                        let mut v = state.binaural_vol.lock().unwrap();
-                        *v = (*v - 0.05).max(0.0);
                     }
                     KeyCode::Char('1') => {
                         state.noise_type.store(0, Ordering::Relaxed);

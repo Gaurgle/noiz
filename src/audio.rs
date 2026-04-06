@@ -6,7 +6,7 @@ use cpal::Stream;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 
-use crate::noise::{NoiseMix, NoiseGen, RainGen};
+use crate::noise::{NoiseMix, NoiseGen};
 
 pub struct AudioState {
     pub volume: Mutex<f32>,
@@ -40,18 +40,20 @@ impl AudioState {
     }
 }
 
-/// Returns (NoiseMix, Option<(binaural_freq, binaural_base)>, is_rain, rain_density)
-fn mix_for_type(t: u8) -> (NoiseMix, Option<(f32, f32)>, bool, f32) {
+/// Returns (NoiseMix, Option<(binaural_split, base_tone)>)
+fn mix_for_type(t: u8) -> (NoiseMix, Option<(f32, f32)>) {
     match t {
-        0 => (NoiseMix::white(), None, false, 0.0),
-        1 => (NoiseMix::pink(), None, false, 0.0),
-        2 => (NoiseMix::brown(), None, false, 0.0),
-        3 => (NoiseMix { white: 0.0, pink: 0.8, brown: 0.2 }, Some((2.0, 80.0)), false, 0.0),
-        4 => (NoiseMix { white: 0.0, pink: 0.1, brown: 0.9 }, Some((0.5, 60.0)), false, 0.0),
-        5 => (NoiseMix { white: 0.0, pink: 0.4, brown: 0.6 }, Some((1.0, 70.0)), false, 0.0),
-        6 => (NoiseMix::brown(), Some((4.0, 80.0)), false, 0.0),
-        7 => (NoiseMix { white: 0.0, pink: 0.3, brown: 0.7 }, Some((0.3, 50.0)), false, 0.0),
-        _ => (NoiseMix::brown(), None, false, 0.0),
+        // Raw noise types — no binaural
+        0 => (NoiseMix::white(), None),
+        1 => (NoiseMix::pink(), None),
+        2 => (NoiseMix::brown(), None),
+        // Presets — noise + binaural matched to brainwave bands
+        3 => (NoiseMix { white: 0.0, pink: 0.1, brown: 0.9 }, Some((2.0, 60.0))),   // delta: deep sleep, 2 Hz split
+        4 => (NoiseMix { white: 0.0, pink: 0.3, brown: 0.7 }, Some((6.0, 80.0))),   // theta: meditation, 6 Hz split
+        5 => (NoiseMix { white: 0.0, pink: 0.7, brown: 0.3 }, Some((10.0, 100.0))), // alpha: relaxed focus, 10 Hz split
+        6 => (NoiseMix { white: 0.0, pink: 0.8, brown: 0.2 }, Some((18.0, 120.0))), // beta: active focus, 18 Hz split
+        7 => (NoiseMix::pink(), Some((40.0, 140.0))),                                 // gamma: deep concentration, 40 Hz split
+        _ => (NoiseMix::brown(), None),
     }
 }
 
@@ -69,15 +71,13 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
 
     let mut rng = SmallRng::from_entropy();
     let mut gen = NoiseGen::new();
-    let (init_mix, init_bin, init_rain, init_density) = mix_for_type(state.noise_type.load(Ordering::Relaxed));
+    let (init_mix, init_bin) = mix_for_type(state.noise_type.load(Ordering::Relaxed));
     if let Some((freq, base)) = init_bin {
         *state.binaural_freq.lock().unwrap() = freq;
         *state.binaural_base.lock().unwrap() = base;
     }
     let mut current_mix = init_mix;
     let mut target_mix = current_mix;
-    let mut rain_active = init_rain;
-    let mut rain_gen = RainGen::new(sample_rate, init_density);
     let mut crossfade_progress = 1.0f32; // 1.0 = complete
 
     // Stereo LFO state — slightly different phase for L and R
@@ -110,16 +110,12 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
 
             // Check for noise type switch
             if state.pending_switch.load(Ordering::Relaxed) {
-                let (new_mix, new_bin, new_rain, new_density) = mix_for_type(state.noise_type.load(Ordering::Relaxed));
+                let (new_mix, new_bin) = mix_for_type(state.noise_type.load(Ordering::Relaxed));
                 target_mix = new_mix;
-                rain_active = new_rain;
-                if new_rain {
-                    rain_gen = RainGen::new(sample_rate, new_density);
-                }
                 if let Some((freq, base)) = new_bin {
                     *state.binaural_freq.lock().unwrap() = freq;
                     *state.binaural_base.lock().unwrap() = base;
-                } else if !new_rain {
+                } else {
                     *state.binaural_freq.lock().unwrap() = 0.0;
                 }
                 crossfade_progress = 0.0;
@@ -174,11 +170,7 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                     current_mix
                 };
 
-                let (l, r) = if rain_active {
-                    rain_gen.sample(&mut rng)
-                } else {
-                    gen.sample(&mut rng, &mix)
-                };
+                let (l, r) = gen.sample(&mut rng, &mix);
 
                 // Stereo LFO modulation
                 let lfo_l = 1.0 + (lfo_phase_l * std::f32::consts::TAU).sin() * lfo_depth;
