@@ -48,6 +48,8 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
     let mut last_rain: Option<u8> = None;
     let mut show_help = false;
     let mut compact = false;
+    let mut timer_end = timer_end;
+    let mut timer_mode: u8 = if timer_end.is_some() { 1 } else { 0 }; // 0=off, 1=45m, 2=1h
 
     loop {
         let paused = state.paused.load(Ordering::Relaxed);
@@ -283,9 +285,11 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
 
             // Timer
             if let Some(ref t) = timer_str {
+                let mode_label = match timer_mode { 1 => "15m", 2 => "45m", 3 => "1h", _ => "" };
                 lines.push(Line::from(vec![
                     Span::styled("  tmr ", Style::default().fg(dim)),
                     Span::styled(t.clone(), Style::default().fg(yellow)),
+                    Span::styled(format!("  {mode_label}"), Style::default().fg(dim)),
                 ]));
             }
 
@@ -465,6 +469,8 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 lines.push(Line::from(vec![
                     Span::styled("  i", Style::default().fg(text)),
                     Span::styled("nfo  ", Style::default().fg(dim)),
+                    Span::styled("t", Style::default().fg(yellow)),
+                    Span::styled("imer  ", Style::default().fg(dim)),
                     Span::styled("m", Style::default().fg(green)),
                     Span::styled("ute  ", Style::default().fg(dim)),
                     Span::styled("c", Style::default().fg(text)),
@@ -521,6 +527,10 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                     Line::from(""),
                     Line::from(vec![
                         Span::styled("  playback", Style::default().fg(text).add_modifier(Modifier::BOLD)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  t                 ", Style::default().fg(yellow)),
+                        Span::styled("timer: 15m → 45m → 1h → off", Style::default().fg(dim)),
                     ]),
                     Line::from(vec![
                         Span::styled("  m                 ", Style::default().fg(green)),
@@ -580,6 +590,15 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
 
                 match key.code {
                     KeyCode::Char('c') => { compact = !compact; }
+                    KeyCode::Char('t') => {
+                        timer_mode = (timer_mode + 1) % 4;
+                        timer_end = match timer_mode {
+                            1 => Some(Instant::now() + Duration::from_secs(15 * 60)),
+                            2 => Some(Instant::now() + Duration::from_secs(45 * 60)),
+                            3 => Some(Instant::now() + Duration::from_secs(60 * 60)),
+                            _ => None,
+                        };
+                    }
                     KeyCode::Char('i') => { show_help = true; }
                     KeyCode::Char('m') => {
                         state.paused.store(!state.paused.load(Ordering::Relaxed), Ordering::Relaxed);

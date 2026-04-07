@@ -29,8 +29,11 @@ noiz                    # brown noise (default, 30% vol)
 noiz white              # white noise
 noiz pink               # pink noise
 noiz brown 45m          # timer — fade out after 45 minutes
+noiz brown 1h           # any duration: 30s, 15m, 2h, etc.
 noiz pink -v 0.5        # set noise volume (0.0–1.0)
 ```
+
+Press `t` in the TUI to cycle preset timers (15m, 45m, 1h), or pass any duration via CLI.
 
 Everything else is controlled from the TUI — binaural presets, rain overlay, and all volumes.
 
@@ -64,6 +67,7 @@ Shift toggles remember your last active setting per source.
 
 | Key | Action |
 |-----|--------|
+| `t` | Timer presets: 15m → 45m → 1h → off (or any duration via CLI) |
 | `m` | Mute/unmute (0.4s fade) |
 | `c` | Compact mode — no border, no animations, short bars, active source only |
 | `i` | Info overlay |
@@ -116,7 +120,7 @@ Rain samples are wav files loaded from `samples-rain/`. Transitions crossfade sm
 - **Binaural beats** — pure discrete L/R sine tones, no channel bleed
 - **Rain overlay** — preloaded wav samples with crossfade looping
 - **Visualizer** — spectrum bars for noise, L/R sweep for binaural, rain drops by intensity
-- **Timer** — supports `30s`, `45m`, `1h` with automatic fade out
+- **Timer** — preset 15m/45m/1h via `t` in the TUI, or any duration via CLI (`30s`, `2h`, etc.). Auto fade out
 
 ## Stack
 
