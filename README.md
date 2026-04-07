@@ -11,7 +11,7 @@ Terminal noise generator for focus and concentration.
 
 Real-time stereo noise synthesis with binaural brainwave presets, rain overlay, and a minimal TUI. Noise and binaural tones are generated in real-time — rain uses looping wav samples.
 
-![noiz TUI](noiz-2.png)
+![noiz TUI](noiz-3.png)
 
 ## Install
 
