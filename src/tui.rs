@@ -48,6 +48,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
     let mut last_rain: Option<u8> = None;
     let mut show_help = false;
     let mut compact = false;
+    let mut confirm_quit = false;
     let mut timer_end = timer_end;
     let mut timer_mode: u8 = if timer_end.is_some() { 1 } else { 0 }; // 0=off, 1=45m, 2=1h
     let mut timer_fired = false;
@@ -575,11 +576,46 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 frame.render_widget(ratatui::widgets::Clear, help_area);
                 frame.render_widget(help_paragraph, help_area);
             }
+
+            if confirm_quit {
+                let quit_lines = vec![
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("  quit? ", Style::default().fg(text)),
+                        Span::styled("[y/n]", Style::default().fg(yellow)),
+                    ]),
+                    Line::from(""),
+                ];
+                let quit_width = 18u16;
+                let quit_height = quit_lines.len() as u16 + 2;
+                let quit_x = area.x + (area.width.saturating_sub(quit_width)) / 2;
+                let quit_y = area.y + (area.height.saturating_sub(quit_height)) / 2;
+                let quit_area = ratatui::layout::Rect::new(quit_x, quit_y, quit_width, quit_height);
+
+                let quit_block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(red))
+                    .border_type(ratatui::widgets::BorderType::Rounded);
+                let quit_paragraph = Paragraph::new(quit_lines).block(quit_block);
+
+                frame.render_widget(ratatui::widgets::Clear, quit_area);
+                frame.render_widget(quit_paragraph, quit_area);
+            }
         })?;
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press { continue; }
+
+                if confirm_quit {
+                    if matches!(key.code, KeyCode::Char('y' | 'Y')) {
+                        state.fade_out.store(true, Ordering::Relaxed);
+                        std::thread::sleep(Duration::from_millis(800));
+                        break;
+                    }
+                    confirm_quit = false;
+                    continue;
+                }
 
                 let is_quit = matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
                     || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL));
@@ -588,9 +624,8 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                         show_help = false;
                         continue;
                     }
-                    state.fade_out.store(true, Ordering::Relaxed);
-                    std::thread::sleep(Duration::from_millis(800));
-                    break;
+                    confirm_quit = true;
+                    continue;
                 }
 
                 if show_help {
