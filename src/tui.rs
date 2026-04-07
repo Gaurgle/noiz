@@ -12,23 +12,6 @@ const NOISE_NAMES: [&str; 4] = ["off", "white", "pink", "brown"];
 const BIN_NAMES: [&str; 6] = ["off", "delta", "theta", "alpha", "beta", "gamma"];
 const RAIN_NAMES: [&str; 4] = ["off", "light", "calm", "heavy"];
 
-const INF_FRAMES: [[&str; 3]; 5] = [
-    ["       ·    ·       ",
-     "      · ·  · ·      ",
-     "       ·    ·       "],
-    ["      ·      ·      ",
-     "    ·  ·    ·  ·    ",
-     "      ·      ·      "],
-    ["     ·        ·     ",
-     "   ·    ·  ·    ·   ",
-     "     ·        ·     "],
-    ["    ·          ·    ",
-     "  ·    ··  ··    ·  ",
-     "    ·          ·    "],
-    ["   ·            ·   ",
-     " ·     ·∞∞·     ·  ",
-     "   ·            ·   "],
-];
 
 // Navigation rows
 const ROW_NOISE: usize = 0;
@@ -60,6 +43,10 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
     let mut anim_time: f32 = 0.0;
     let mut last_frame = Instant::now();
     let mut selected_row: usize = ROW_NOISE;
+    let mut last_noise: Option<u8> = None;
+    let mut last_binaural: Option<u8> = None;
+    let mut last_rain: Option<u8> = None;
+    let mut show_help = false;
 
     loop {
         let paused = state.paused.load(Ordering::Relaxed);
@@ -116,7 +103,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 Span::styled(status_icon, Style::default().fg(status_color)),
                 Span::styled(if paused { " paused" } else { "" }, Style::default().fg(dim)),
             ]));
-            lines.push(Line::from(Span::styled("  ─────────────────────────────────────", Style::default().fg(subtle))));
+            lines.push(Line::from(Span::styled("  ──────────────────────────────────────────", Style::default().fg(subtle))));
 
             // Dimmed versions of source colors for sub-controls (tone, mod)
             let c_noise_dim = Color::Rgb(180, 130, 100);
@@ -139,6 +126,26 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 }
             };
 
+            // Helper: source label — first letter always colored (keybind hint), rest colored when active
+            let source_label = |name: &str, row: usize, color: Color, active: bool| -> Vec<Span<'static>> {
+                let first = &name[..1];
+                let rest = &name[1..];
+                let rest_c = if active { color } else { surface };
+                if selected_row == row {
+                    vec![
+                        Span::styled(" [".to_string(), Style::default().fg(color)),
+                        Span::styled(first.to_string(), Style::default().fg(color)),
+                        Span::styled(rest.to_string(), Style::default().fg(rest_c)),
+                        Span::styled("] ".to_string(), Style::default().fg(color)),
+                    ]
+                } else {
+                    vec![
+                        Span::styled(format!("  {first}"), Style::default().fg(color)),
+                        Span::styled(format!("{rest}  "), Style::default().fg(rest_c)),
+                    ]
+                }
+            };
+
             // Helper for source option rows
             let source_row = |items: &[&str], active_idx: usize, is_on: bool| -> Vec<Span<'static>> {
                 let mut spans = Vec::new();
@@ -156,18 +163,18 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             };
 
             // Noise source row
-            let mut noise_line: Vec<Span> = label("noise", ROW_NOISE, c_noise, noise_active);
+            let mut noise_line: Vec<Span> = source_label("noise", ROW_NOISE, c_noise, noise_active);
             noise_line.extend(source_row(&NOISE_NAMES, noise_idx, noise_active));
             lines.push(Line::from(noise_line));
 
             // Binaural source row
-            let mut bin_line: Vec<Span> = label("bin", ROW_BIN, c_bin, bin_active);
+            let mut bin_line: Vec<Span> = source_label("bin", ROW_BIN, c_bin, bin_active);
             bin_line.push(Span::raw("  "));
             bin_line.extend(source_row(&BIN_NAMES, bin_preset, bin_active));
             lines.push(Line::from(bin_line));
 
             // Rain source row
-            let mut rain_line: Vec<Span> = label("rain", ROW_RAIN, c_rain, rain_active);
+            let mut rain_line: Vec<Span> = source_label("rain", ROW_RAIN, c_rain, rain_active);
             rain_line.push(Span::raw(" "));
             rain_line.extend(source_row(&RAIN_NAMES, rain_type, rain_active));
             lines.push(Line::from(rain_line));
@@ -262,89 +269,178 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 ]));
             }
 
-            // Visualizer + rain animation
+            // Animations — three side by side: noise slope, binaural pulse, rain drops
             let now_inst = Instant::now();
             if !paused { anim_time += (now_inst - last_frame).as_secs_f32(); }
             last_frame = now_inst;
             let elapsed = anim_time;
+            let anim_rows = 3;
+            let anim_w = 10;
 
-            let pulse_rate = if binaural > 0.0 { (binaural / 4.0).clamp(0.3, 2.0) } else { 0.04 };
-            let phase = (elapsed * pulse_rate * std::f32::consts::TAU).sin();
-            let brightness = (phase + 1.0) / 2.0;
-
-            let vis_color = if bin_active {
-                Color::Rgb(
-                    (55.0 + brightness * 148.0) as u8,
-                    (57.0 + brightness * 109.0) as u8,
-                    (75.0 + brightness * 172.0) as u8,
-                )
-            } else {
-                Color::Rgb(
-                    (55.0 + brightness * 100.0) as u8,
-                    (57.0 + brightness * 70.0) as u8,
-                    (75.0 + brightness * 50.0) as u8,
-                )
+            // --- Noise spectrum bars ---
+            // Bar heights reflect frequency profile: white=flat, pink=tapers, brown=steep dropoff
+            // Modulation drives jitter speed
+            // --- Noise spectrum bars ---
+            // Bar heights reflect frequency profile: white=flat, pink=tapers, brown=steep dropoff
+            // LFO rate in audio is 0.04 Hz — match that slow drift; depth controls amplitude
+            let bar_count = anim_w;
+            let noise_bars: Vec<f32> = {
+                let mut bars = Vec::new();
+                let lfo_rate = 0.04_f32; // matches audio LFO
+                for i in 0..bar_count {
+                    let x = i as f32 / (bar_count - 1) as f32; // 0=low freq, 1=high freq
+                    let base = match noise_idx {
+                        1 => 0.7,                          // white: flat
+                        2 => 0.9 - x * 0.5,               // pink: gentle slope
+                        3 => 0.95 - x * x * 0.85,         // brown: steep curve
+                        _ => 0.0,
+                    };
+                    let jitter = if noise_active {
+                        let seed = i as f32 * 2.7 + 0.3;
+                        let t = elapsed * lfo_rate * std::f32::consts::TAU;
+                        ((t + seed).sin() * 0.6 + (t * 1.7 + seed * 3.1).sin() * 0.4) * modulation
+                    } else { 0.0 };
+                    bars.push((base + jitter).clamp(0.0, 1.0));
+                }
+                bars
             };
 
-            let frame_idx = (brightness * (INF_FRAMES.len() - 1) as f32) as usize;
-            let inf_frame = &INF_FRAMES[frame_idx.min(INF_FRAMES.len() - 1)];
+            // --- Binaural L/R pulse ---
+            // Beat freq mapped to a comfortable visual range: delta 2Hz→slow, gamma 40Hz→fast
+            // log scale so the range feels proportional
+            let visual_hz = if bin_active && binaural > 0.0 {
+                let min_hz = 2.0_f32;
+                let max_hz = 40.0_f32;
+                let min_vis = 0.15_f32;
+                let max_vis = 1.5_f32;
+                let t = ((binaural / min_hz).ln() / (max_hz / min_hz).ln()).clamp(0.0, 1.0);
+                min_vis + t * (max_vis - min_vis)
+            } else { 0.0 };
+            // Focus position sweeps -1 (left) to +1 (right) and back
+            let bin_focus = if bin_active {
+                (elapsed * visual_hz * std::f32::consts::TAU).sin()
+            } else { 0.0 };
 
-            let rain_width = 14;
-            let rain_height = 3;
-            let rain_light = Color::Rgb(100, 170, 220);
-            let rain_dim_c = Color::Rgb(50, 90, 130);
-
+            // --- Rain drop animation ---
+            let rain_anim_w: usize = 10;
             let all_drops: &[(usize, f32, f32)] = &[
-                (1, 1.1, 0.0), (5, 0.8, 0.4), (10, 1.3, 0.7),
-                (3, 0.9, 0.2), (8, 1.4, 0.5), (12, 0.7, 0.9),
-                (0, 1.2, 0.1), (4, 1.6, 0.3), (7, 0.6, 0.6), (11, 1.0, 0.8),
+                (1, 1.1, 0.0), (4, 0.8, 0.4), (8, 1.3, 0.7),
+                (2, 0.9, 0.2), (6, 1.4, 0.5), (9, 0.7, 0.9),
+                (0, 1.2, 0.1), (3, 1.6, 0.3), (5, 0.6, 0.6), (7, 1.0, 0.8),
             ];
             let drop_count = match rain_type { 1 => 3, 2 => 6, 3 => 10, _ => 0 };
+            let rain_light = if rain_active { Color::Rgb(100, 170, 220) } else { surface };
+            let rain_dim_c = if rain_active { Color::Rgb(50, 90, 130) } else { surface };
 
             lines.push(Line::from(""));
-            for row_idx in 0..rain_height {
-                let mut spans = vec![
-                    Span::styled(format!("  {}", inf_frame[row_idx]), Style::default().fg(vis_color)),
-                ];
-                if drop_count > 0 {
-                    let mut rain_chars = vec![(' ', 0u8); rain_width];
+            for row_idx in 0..anim_rows {
+                let mut spans: Vec<Span> = vec![Span::raw("  ")];
+
+                // Noise spectrum bars
+                let bar_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+                for i in 0..bar_count {
+                    let h = noise_bars[i];
+                    let bar_rows = h * anim_rows as f32;
+                    let row_from_bottom = (anim_rows - 1 - row_idx) as f32;
+                    let fill = bar_rows - row_from_bottom;
+                    let c = if !noise_active { surface } else { c_noise };
+                    if fill >= 1.0 {
+                        spans.push(Span::styled("█", Style::default().fg(c)));
+                    } else if fill > 0.0 {
+                        let idx = (fill * (bar_chars.len() - 1) as f32) as usize;
+                        spans.push(Span::styled(bar_chars[idx].to_string(), Style::default().fg(c)));
+                    } else {
+                        spans.push(Span::styled(" ", Style::default().fg(surface)));
+                    }
+                }
+
+                spans.push(Span::raw("  "));
+
+                // Binaural L/R pulse — single spot sweeping left↔right
+                let bin_w = anim_w;
+                for i in 0..bin_w {
+                    let col_pos = (i as f32 / (bin_w - 1) as f32) * 2.0 - 1.0; // -1..+1
+                    let dist = (col_pos - bin_focus).abs();
+                    let intensity = (1.0 - dist * 0.8).clamp(0.0, 1.0);
+
+                    // L/R labels at edges
+                    if i == 0 && row_idx == 1 {
+                        let br = intensity;
+                        let c = if !bin_active { surface }
+                            else { Color::Rgb(
+                                (80.0 + br * 123.0) as u8,
+                                (70.0 + br * 96.0) as u8,
+                                (110.0 + br * 137.0) as u8,
+                            )};
+                        spans.push(Span::styled("L", Style::default().fg(c)));
+                        continue;
+                    }
+                    if i == bin_w - 1 && row_idx == 1 {
+                        let br = intensity;
+                        let c = if !bin_active { surface }
+                            else { Color::Rgb(
+                                (80.0 + br * 123.0) as u8,
+                                (70.0 + br * 96.0) as u8,
+                                (110.0 + br * 137.0) as u8,
+                            )};
+                        spans.push(Span::styled("R", Style::default().fg(c)));
+                        continue;
+                    }
+
+                    let show = match row_idx {
+                        1 => intensity > 0.05,
+                        0 | 2 => intensity > 0.4,
+                        _ => false,
+                    };
+                    if show && bin_active {
+                        let ch = if intensity > 0.7 { '█' }
+                            else if intensity > 0.4 { '▓' }
+                            else { '░' };
+                        let c = Color::Rgb(
+                            (55.0 + intensity * 148.0) as u8,
+                            (57.0 + intensity * 109.0) as u8,
+                            (75.0 + intensity * 172.0) as u8,
+                        );
+                        spans.push(Span::styled(ch.to_string(), Style::default().fg(c)));
+                    } else {
+                        spans.push(Span::styled(" ", Style::default().fg(surface)));
+                    }
+                }
+
+                spans.push(Span::raw("  "));
+
+                // Rain drops
+                let mut rain_chars = vec![(' ', 0u8); rain_anim_w];
+                if rain_active {
                     for (i, &(col, speed, offset)) in all_drops.iter().take(drop_count).enumerate() {
                         let ps = offset + (i as f32 * 1.618);
                         let dp = (elapsed * speed + ps) % 1.0;
-                        let dr = (dp * (rain_height as f32 + 1.0)) as usize;
-                        if col < rain_width {
+                        let dr = (dp * (anim_rows as f32 + 1.0)) as usize;
+                        if col < rain_anim_w {
                             if dr == row_idx { rain_chars[col] = ('|', 2); }
                             else if dr == row_idx + 1 && rain_chars[col].1 < 1 { rain_chars[col] = ('·', 1); }
                         }
                     }
-                    spans.push(Span::raw("  "));
-                    for &(ch, _) in &rain_chars {
-                        match ch {
-                            '|' => spans.push(Span::styled("|", Style::default().fg(rain_light))),
-                            '·' => spans.push(Span::styled("·", Style::default().fg(rain_dim_c))),
-                            _ => spans.push(Span::raw(" ")),
-                        }
+                }
+                for &(ch, _) in &rain_chars {
+                    match ch {
+                        '|' => spans.push(Span::styled("|", Style::default().fg(rain_light))),
+                        '·' => spans.push(Span::styled("·", Style::default().fg(rain_dim_c))),
+                        _ => spans.push(Span::raw(" ")),
                     }
                 }
+
                 lines.push(Line::from(spans));
             }
 
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled("  ─────────────────────────────────────", Style::default().fg(subtle))));
+            lines.push(Line::from(Span::styled("  ──────────────────────────────────────────", Style::default().fg(subtle))));
 
             lines.push(Line::from(vec![
-                Span::styled("  ↑↓", Style::default().fg(text)),
-                Span::styled(" select  ", Style::default().fg(dim)),
-                Span::styled("←→", Style::default().fg(text)),
-                Span::styled(" adjust  ", Style::default().fg(dim)),
-                Span::styled("n", Style::default().fg(c_noise)),
-                Span::styled("oise ", Style::default().fg(dim)),
-                Span::styled("b", Style::default().fg(c_bin)),
-                Span::styled("in ", Style::default().fg(dim)),
-                Span::styled("r", Style::default().fg(c_rain)),
-                Span::styled("ain  ", Style::default().fg(dim)),
-                Span::styled("space", Style::default().fg(green)),
-                Span::styled(" pause  ", Style::default().fg(dim)),
+                Span::styled("  i", Style::default().fg(text)),
+                Span::styled("nfo  ", Style::default().fg(dim)),
+                Span::styled("m", Style::default().fg(green)),
+                Span::styled("ute  ", Style::default().fg(dim)),
                 Span::styled("q", Style::default().fg(red)),
                 Span::styled("uit", Style::default().fg(dim)),
             ]));
@@ -357,6 +453,70 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
 
             let paragraph = Paragraph::new(lines).block(block);
             frame.render_widget(paragraph, area);
+
+            if show_help {
+                let help_lines = vec![
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("  navigation", Style::default().fg(text).add_modifier(Modifier::BOLD)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  hjkl / arrows   ", Style::default().fg(text)),
+                        Span::styled("move & adjust", Style::default().fg(dim)),
+                    ]),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("  sources", Style::default().fg(text).add_modifier(Modifier::BOLD)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  n", Style::default().fg(c_noise)),
+                        Span::styled(" / ", Style::default().fg(subtle)),
+                        Span::styled("b", Style::default().fg(c_bin)),
+                        Span::styled(" / ", Style::default().fg(subtle)),
+                        Span::styled("r", Style::default().fg(c_rain)),
+                        Span::styled("               cycle source type", Style::default().fg(dim)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  N", Style::default().fg(c_noise)),
+                        Span::styled(" / ", Style::default().fg(subtle)),
+                        Span::styled("B", Style::default().fg(c_bin)),
+                        Span::styled(" / ", Style::default().fg(subtle)),
+                        Span::styled("R", Style::default().fg(c_rain)),
+                        Span::styled("               toggle on/off", Style::default().fg(dim)),
+                    ]),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("  playback", Style::default().fg(text).add_modifier(Modifier::BOLD)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  m                 ", Style::default().fg(green)),
+                        Span::styled("mute/unmute", Style::default().fg(dim)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  q / esc           ", Style::default().fg(red)),
+                        Span::styled("quit", Style::default().fg(dim)),
+                    ]),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("  press any key to close", Style::default().fg(subtle)),
+                    ]),
+                ];
+
+                let help_height = help_lines.len() as u16 + 2;
+                let help_width = 40u16;
+                let help_x = area.x + (area.width.saturating_sub(help_width)) / 2;
+                let help_y = area.y + (area.height.saturating_sub(help_height)) / 2;
+                let help_area = ratatui::layout::Rect::new(help_x, help_y, help_width, help_height);
+
+                let help_block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(dim))
+                    .border_type(ratatui::widgets::BorderType::Rounded);
+                let help_paragraph = Paragraph::new(help_lines).block(help_block);
+
+                frame.render_widget(ratatui::widgets::Clear, help_area);
+                frame.render_widget(help_paragraph, help_area);
+            }
         })?;
 
         if event::poll(Duration::from_millis(100))? {
@@ -366,18 +526,28 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 let is_quit = matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
                     || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL));
                 if is_quit {
+                    if show_help {
+                        show_help = false;
+                        continue;
+                    }
                     state.fade_out.store(true, Ordering::Relaxed);
                     std::thread::sleep(Duration::from_millis(800));
                     break;
                 }
 
+                if show_help {
+                    show_help = false;
+                    continue;
+                }
+
                 match key.code {
-                    KeyCode::Char(' ') => {
+                    KeyCode::Char('i') => { show_help = true; }
+                    KeyCode::Char('m') => {
                         state.paused.store(!state.paused.load(Ordering::Relaxed), Ordering::Relaxed);
                     }
-                    KeyCode::Up => { selected_row = next_row(selected_row, -1); }
-                    KeyCode::Down => { selected_row = next_row(selected_row, 1); }
-                    KeyCode::Right => {
+                    KeyCode::Up | KeyCode::Char('k') => { selected_row = next_row(selected_row, -1); }
+                    KeyCode::Down | KeyCode::Char('j') => { selected_row = next_row(selected_row, 1); }
+                    KeyCode::Right | KeyCode::Char('l') => {
                         match selected_row {
                             ROW_NOISE => {
                                 let cur = state.noise_type.load(Ordering::Relaxed);
@@ -409,7 +579,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                             _ => {}
                         }
                     }
-                    KeyCode::Left => {
+                    KeyCode::Left | KeyCode::Char('h') => {
                         match selected_row {
                             ROW_NOISE => {
                                 let cur = state.noise_type.load(Ordering::Relaxed);
@@ -458,6 +628,37 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                         let cur = state.rain_type.load(Ordering::Relaxed);
                         let next = (cur + 1) % 4;
                         state.rain_type.store(next, Ordering::Relaxed);
+                        state.rain_pending.store(true, Ordering::Relaxed);
+                    }
+                    // Shift toggles — on/off for each source (remembers last active setting)
+                    KeyCode::Char('N') => {
+                        let cur = state.noise_type.load(Ordering::Relaxed);
+                        if cur == 0 {
+                            state.noise_type.store(last_noise.unwrap_or(3), Ordering::Relaxed);
+                        } else {
+                            last_noise = Some(cur);
+                            state.noise_type.store(0, Ordering::Relaxed);
+                        }
+                        state.pending_switch.store(true, Ordering::Relaxed);
+                    }
+                    KeyCode::Char('B') => {
+                        let cur = state.binaural_preset.load(Ordering::Relaxed);
+                        if cur == 0 {
+                            state.binaural_preset.store(last_binaural.unwrap_or(1), Ordering::Relaxed);
+                        } else {
+                            last_binaural = Some(cur);
+                            state.binaural_preset.store(0, Ordering::Relaxed);
+                        }
+                        state.binaural_pending.store(true, Ordering::Relaxed);
+                    }
+                    KeyCode::Char('R') => {
+                        let cur = state.rain_type.load(Ordering::Relaxed);
+                        if cur == 0 {
+                            state.rain_type.store(last_rain.unwrap_or(1), Ordering::Relaxed);
+                        } else {
+                            last_rain = Some(cur);
+                            state.rain_type.store(0, Ordering::Relaxed);
+                        }
                         state.rain_pending.store(true, Ordering::Relaxed);
                     }
                     _ => {}

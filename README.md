@@ -11,6 +11,8 @@ Terminal noise generator for focus and concentration.
 
 Real-time stereo noise synthesis with binaural brainwave presets, rain overlay, and a minimal TUI. Noise and binaural tones are generated in real-time — rain uses looping wav samples.
 
+![noiz TUI](noiz-1.png)
+
 ## Install
 
 ```bash
@@ -32,24 +34,23 @@ noiz pink -v 0.5        # set noise volume (0.0–1.0)
 
 Everything else is controlled from the TUI — binaural presets, rain overlay, and all volumes.
 
-## TUI Navigation
+## TUI Controls
 
-The interface is navigated with arrow keys:
+Navigate with `hjkl` (vim) or arrow keys. Selected parameters are shown with `[brackets]`. Press `i` for an in-app info overlay.
 
-- `↑` `↓` — select parameter
-- `←` `→` — adjust value
+### Sources
 
-Selected parameters are shown with `[brackets]`.
+Source labels highlight the first letter as a keybind hint — the rest lights up in color when active.
 
-### Sources (top section)
+| Row | Options | Keys |
+|-----|---------|------|
+| **noise** | off, white, pink, brown | `n` cycle, `N` toggle on/off |
+| **bin** | off, delta, theta, alpha, beta, gamma | `b` cycle, `B` toggle on/off |
+| **rain** | off, light, calm, heavy | `r` cycle, `R` toggle on/off |
 
-| Row | Options | Quick key |
-|-----|---------|-----------|
-| **noise** | off, white, pink, brown | `n` cycle |
-| **bin** | off, delta, theta, alpha, beta, gamma | `b` cycle |
-| **rain** | off, light, calm, heavy | `r` cycle |
+Shift toggles remember your last active setting per source.
 
-### Controls (bottom section)
+### Controls
 
 | Row | Range | What it does |
 |-----|-------|-------------|
@@ -63,7 +64,8 @@ Selected parameters are shown with `[brackets]`.
 
 | Key | Action |
 |-----|--------|
-| `space` | Pause/resume (0.4s fade) |
+| `m` | Mute/unmute (0.4s fade) |
+| `i` | Info overlay |
 | `q` / `Esc` / `Ctrl+C` | Quit (750ms fade out) |
 
 ## Noise Types
@@ -112,7 +114,7 @@ Rain samples are wav files loaded from `samples-rain/`. Transitions crossfade sm
 - **Stereo modulation** — adjustable slow LFO with different phase per channel
 - **Binaural beats** — pure discrete L/R sine tones, no channel bleed
 - **Rain overlay** — preloaded wav samples with crossfade looping
-- **Visualizer** — infinity symbol breathing with binaural, rain drops by intensity
+- **Visualizer** — spectrum bars for noise, L/R sweep for binaural, rain drops by intensity
 - **Timer** — supports `30s`, `45m`, `1h` with automatic fade out
 
 ## Stack
