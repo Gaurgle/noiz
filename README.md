@@ -15,7 +15,13 @@ Real-time stereo noise synthesis with binaural brainwave presets, rain overlay, 
 
 ## Install
 
+Requires [Rust](https://www.rust-lang.org/tools/install) (stable).
+
 ```bash
+# Install Rust (if you don't have it)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install noiz
 git clone https://github.com/Gaurgle/noiz.git
 cd noiz
 cargo install --path .
@@ -98,7 +104,9 @@ Presets are completely independent from noise — combine any noise type with an
 
 Carrier frequency is adjustable (40–400 Hz) via the **tone** control.
 
-## Rain Overlay
+## Rain Overlay (experimental)
+
+> Rain is a work in progress — sample quality is being improved. It only works when running noiz from the cloned repo directory.
 
 Rain samples are layered on top of any noise/binaural combination. Press `r` to cycle through:
 
@@ -108,7 +116,7 @@ Rain samples are layered on top of any noise/binaural combination. Press `r` to 
 | **calm** | Steady rain |
 | **heavy** | Downpour |
 
-Rain samples are wav files loaded from `samples-rain/`. Transitions crossfade smoothly with 500ms fade envelopes.
+Samples are loaded from `samples-rain/` relative to the binary or current directory. Transitions crossfade with 500ms fade envelopes.
 
 ## Features
 
