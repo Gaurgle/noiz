@@ -11,7 +11,7 @@ Terminal noise generator for focus and concentration.
 
 Real-time stereo noise synthesis with binaural brainwave presets, rain overlay, and a minimal TUI. Noise and binaural tones are generated in real-time — rain uses looping wav samples.
 
-![noiz TUI](noiz-1.png)
+![noiz TUI](noiz-2.png)
 
 ## Install
 
@@ -121,3 +121,8 @@ Rain samples are wav files loaded from `samples-rain/`. Transitions crossfade sm
 ## Stack
 
 Rust, [cpal](https://github.com/RustAudio/cpal), [ratatui](https://github.com/ratatui/ratatui), [crossterm](https://github.com/crossterm-rs/crossterm), [hound](https://github.com/ruuda/hound)
+
+## See Also
+
+- [repoz](https://github.com/Gaurgle/repos-cli) — terminal dashboard for managing multiple git repos
+- [notez](https://github.com/Gaurgle/notez-cli) — fast terminal note-taking with fuzzy search
