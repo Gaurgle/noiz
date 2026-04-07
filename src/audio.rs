@@ -33,6 +33,9 @@ pub struct AudioState {
     pub modulation_depth: Mutex<f32>,
     pub fade_out: AtomicBool,
     pub fade_out_duration: Mutex<f32>,
+
+    // Timer end signal
+    pub timer_signal: AtomicBool,
 }
 
 impl AudioState {
@@ -57,6 +60,8 @@ impl AudioState {
             modulation_depth: Mutex::new(0.08),
             fade_out: AtomicBool::new(false),
             fade_out_duration: Mutex::new(0.75),
+
+            timer_signal: AtomicBool::new(false),
         }
     }
 }
@@ -133,6 +138,28 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
     let mut fade_in_vol = 0.0f32;
     let mut fade_out_vol = 1.0f32;
     let mut pause_vol = 1.0f32;
+
+    // Timer end signal — morse "end": E(.) N(-.) D(-..)
+    // Unit=130ms, tone=196Hz (G3), smooth 10ms ramps
+    let sig_freq: f32 = 196.0;
+    let sig_vol: f32 = 0.18;
+    let sig_unit = (sample_rate * 0.13) as usize;
+    let sig_ramp = (sample_rate * 0.01) as usize; // 10ms attack/release
+    // Pattern: (tone, units) — gaps are silence segments
+    let sig_pattern: [(bool, usize); 11] = [
+        (true, 1), (false, 3),                              // E + gap
+        (true, 3), (false, 1), (true, 1), (false, 3),       // N + gap
+        (true, 3), (false, 1), (true, 1), (false, 1), (true, 1), // D
+    ];
+    // Precompute segment start offsets in samples
+    let mut sig_offsets: [usize; 12] = [0; 12];
+    for i in 0..11 {
+        sig_offsets[i + 1] = sig_offsets[i] + sig_pattern[i].1 * sig_unit;
+    }
+    let sig_total = sig_offsets[11];
+    let mut sig_active = false;
+    let mut sig_sample: usize = 0;
+    let mut sig_phase: f32 = 0.0;
 
     let stream = device.build_output_stream(
         &stream_config,
@@ -222,8 +249,18 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                     fade_out_vol -= 1.0 / (sample_rate * fade_dur);
                     if fade_out_vol <= 0.0 {
                         fade_out_vol = 0.0;
-                        state.paused.store(true, Ordering::Relaxed);
+                        if !sig_active {
+                            state.paused.store(true, Ordering::Relaxed);
+                        }
                     }
+                }
+
+                // Start timer signal when flag is set (driven by TUI 1s delay)
+                if state.timer_signal.load(Ordering::Relaxed) && !sig_active {
+                    sig_active = true;
+                    sig_sample = 0;
+                    sig_phase = 0.0;
+                    state.timer_signal.store(false, Ordering::Relaxed);
                 }
 
                 // Pause fade (0.4s)
@@ -233,7 +270,38 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                 } else {
                     pause_vol = (pause_vol + pause_speed).min(1.0);
                 }
-                if pause_vol <= 0.0 {
+
+                // Timer end signal (independent of main envelopes)
+                let mut sig_out = 0.0f32;
+                if sig_active {
+                    // Find which segment we're in
+                    let mut seg_idx = 0;
+                    for i in 0..11 {
+                        if sig_sample < sig_offsets[i + 1] { seg_idx = i; break; }
+                    }
+                    let (is_tone, units) = sig_pattern[seg_idx];
+                    if is_tone {
+                        let seg_len = units * sig_unit;
+                        let pos_in_seg = sig_sample - sig_offsets[seg_idx];
+                        // Smooth ramp envelope to avoid clicks
+                        let ramp_env = if pos_in_seg < sig_ramp {
+                            pos_in_seg as f32 / sig_ramp as f32
+                        } else if pos_in_seg >= seg_len - sig_ramp {
+                            (seg_len - 1 - pos_in_seg) as f32 / sig_ramp as f32
+                        } else {
+                            1.0
+                        };
+                        sig_out = (sig_phase * std::f32::consts::TAU).sin() * sig_vol * ramp_env;
+                        sig_phase = (sig_phase + sig_freq / sample_rate) % 1.0;
+                    }
+                    sig_sample += 1;
+                    if sig_sample >= sig_total {
+                        sig_active = false;
+                        state.paused.store(true, Ordering::Relaxed);
+                    }
+                }
+
+                if pause_vol <= 0.0 && !sig_active && sig_out == 0.0 {
                     for sample in frame.iter_mut() { *sample = 0.0; }
                     continue;
                 }
@@ -283,8 +351,8 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
 
                 // Global envelope
                 let envelope = fade_in_vol * fade_out_vol * pause_vol;
-                let final_l = (out_l * envelope).clamp(-1.0, 1.0);
-                let final_r = (out_r * envelope).clamp(-1.0, 1.0);
+                let final_l = (out_l * envelope + sig_out).clamp(-1.0, 1.0);
+                let final_r = (out_r * envelope + sig_out).clamp(-1.0, 1.0);
 
                 match channels {
                     1 => frame[0] = (final_l + final_r) * 0.5,

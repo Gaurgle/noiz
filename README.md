@@ -18,8 +18,7 @@ Real-time stereo noise synthesis with binaural brainwave presets, rain overlay, 
 ```bash
 git clone https://github.com/Gaurgle/noiz.git
 cd noiz
-cargo build --release
-cp target/release/noiz ~/.local/bin/
+cargo install --path .
 ```
 
 ## Usage
@@ -67,7 +66,7 @@ Shift toggles remember your last active setting per source.
 
 | Key | Action |
 |-----|--------|
-| `t` | Timer presets: 15m → 45m → 1h → off (or any duration via CLI) |
+| `t` | Timer presets: 15m → 45m → 1h → off. Fades out + morse "end" signal |
 | `m` | Mute/unmute (0.4s fade) |
 | `c` | Compact mode — no border, no animations, short bars, active source only |
 | `i` | Info overlay |
@@ -120,7 +119,7 @@ Rain samples are wav files loaded from `samples-rain/`. Transitions crossfade sm
 - **Binaural beats** — pure discrete L/R sine tones, no channel bleed
 - **Rain overlay** — preloaded wav samples with crossfade looping
 - **Visualizer** — spectrum bars for noise, L/R sweep for binaural, rain drops by intensity
-- **Timer** — preset 15m/45m/1h via `t` in the TUI, or any duration via CLI (`30s`, `2h`, etc.). Auto fade out
+- **Timer** — preset 15m/45m/1h via `t` in the TUI, or any duration via CLI (`30s`, `2h`, etc.). Fades out, plays a morse "end" signal, stays open
 
 ## Stack
 

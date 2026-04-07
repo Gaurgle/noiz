@@ -50,6 +50,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
     let mut compact = false;
     let mut timer_end = timer_end;
     let mut timer_mode: u8 = if timer_end.is_some() { 1 } else { 0 }; // 0=off, 1=45m, 2=1h
+    let mut signal_at: Option<Instant> = None;
 
     loop {
         let paused = state.paused.load(Ordering::Relaxed);
@@ -70,10 +71,17 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
         });
 
         if let Some(end) = timer_end {
-            if Instant::now() >= end {
+            if Instant::now() >= end && !state.fade_out.load(Ordering::Relaxed) {
                 *state.fade_out_duration.lock().unwrap() = 5.0;
                 state.fade_out.store(true, Ordering::Relaxed);
-                if paused { break; }
+                signal_at = Some(Instant::now() + Duration::from_secs(2));
+            }
+        }
+
+        if let Some(at) = signal_at {
+            if Instant::now() >= at {
+                state.timer_signal.store(true, Ordering::Relaxed);
+                signal_at = None;
             }
         }
 
