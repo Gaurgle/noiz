@@ -82,24 +82,18 @@ impl NoiseGen {
         }
     }
 
-    /// Generate a stereo sample (L, R) for the given noise mix
+    /// Generate a stereo sample (L, R) for the given noise mix.
+    /// All generators run every sample to stay "warm" — avoids artifacts on crossfade.
     pub fn sample(&mut self, rng: &mut impl Rng, mix: &NoiseMix) -> (f32, f32) {
-        let mut l = 0.0f32;
-        let mut r = 0.0f32;
+        let wl = WhiteNoise::sample(rng) * 0.35;
+        let wr = WhiteNoise::sample(rng) * 0.35;
+        let pl = self.pink_l.sample(rng);
+        let pr = self.pink_r.sample(rng);
+        let bl = self.brown_l.sample(rng);
+        let br = self.brown_r.sample(rng);
 
-        if mix.white > 0.0 {
-            // White noise has more perceived energy than pink/brown, scale down to balance
-            l += WhiteNoise::sample(rng) * mix.white * 0.35;
-            r += WhiteNoise::sample(rng) * mix.white * 0.35;
-        }
-        if mix.pink > 0.0 {
-            l += self.pink_l.sample(rng) * mix.pink;
-            r += self.pink_r.sample(rng) * mix.pink;
-        }
-        if mix.brown > 0.0 {
-            l += self.brown_l.sample(rng) * mix.brown;
-            r += self.brown_r.sample(rng) * mix.brown;
-        }
+        let l = wl * mix.white + pl * mix.pink + bl * mix.brown;
+        let r = wr * mix.white + pr * mix.pink + br * mix.brown;
 
         (l, r)
     }

@@ -10,52 +10,77 @@ use crate::noise::{NoiseMix, NoiseGen};
 use crate::samples;
 
 pub struct AudioState {
-    pub volume: Mutex<f32>,
-    pub target_volume: Mutex<f32>,
-    pub paused: AtomicBool,
-    pub noise_type: AtomicU8, // 0-2=noise, 3-7=binaural
-    pub rain_type: AtomicU8,  // 0=off, 1=light, 2=calm, 3=heavy
-    pub rain_pending: AtomicBool,
+    // Noise
+    pub noise_type: AtomicU8,         // 0=white, 1=pink, 2=brown
+    pub noise_vol: Mutex<f32>,        // 0.0-1.0
+    pub target_noise_vol: Mutex<f32>,
     pub pending_switch: AtomicBool,
-    pub binaural_freq: Mutex<f32>, // 0.0 = off
-    pub binaural_base: Mutex<f32>, // base tone frequency
-    pub binaural_vol: Mutex<f32>,  // 0.0 - 1.0
-    pub modulation_depth: Mutex<f32>, // 0.0 - 0.20
+
+    // Binaural (completely independent)
+    pub binaural_preset: AtomicU8,    // 0=off, 1=delta, 2=theta, 3=alpha, 4=beta, 5=gamma
+    pub binaural_freq: Mutex<f32>,    // split frequency in Hz
+    pub binaural_base: Mutex<f32>,    // carrier tone Hz
+    pub binaural_vol: Mutex<f32>,     // 0.0-1.0
+    pub binaural_pending: AtomicBool,
+
+    // Rain (overlay)
+    pub rain_type: AtomicU8,          // 0=off, 1=light, 2=calm, 3=heavy
+    pub rain_vol: Mutex<f32>,         // 0.0-1.0
+    pub rain_pending: AtomicBool,
+
+    // Global
+    pub paused: AtomicBool,
+    pub modulation_depth: Mutex<f32>,
     pub fade_out: AtomicBool,
-    pub fade_out_duration: Mutex<f32>, // seconds
+    pub fade_out_duration: Mutex<f32>,
 }
 
 impl AudioState {
-    pub fn new(volume: f32) -> Self {
+    pub fn new(noise_vol: f32) -> Self {
         Self {
-            volume: Mutex::new(volume),
-            target_volume: Mutex::new(volume),
-            paused: AtomicBool::new(false),
-            noise_type: AtomicU8::new(2), // default brown
+            noise_type: AtomicU8::new(3), // brown (0=off, 1=white, 2=pink, 3=brown)
+            noise_vol: Mutex::new(noise_vol),
+            target_noise_vol: Mutex::new(noise_vol),
             pending_switch: AtomicBool::new(false),
+
+            binaural_preset: AtomicU8::new(0), // off
             binaural_freq: Mutex::new(0.0),
-            binaural_base: Mutex::new(120.0),
-            binaural_vol: Mutex::new(0.55),
+            binaural_base: Mutex::new(300.0), // 300 Hz default carrier
+            binaural_vol: Mutex::new(0.16),
+            binaural_pending: AtomicBool::new(false),
+
             rain_type: AtomicU8::new(0),
+            rain_vol: Mutex::new(0.35),
             rain_pending: AtomicBool::new(false),
-            modulation_depth: Mutex::new(0.08), // default ±8%
+
+            paused: AtomicBool::new(false),
+            modulation_depth: Mutex::new(0.08),
             fade_out: AtomicBool::new(false),
-            fade_out_duration: Mutex::new(0.75), // default 750ms
+            fade_out_duration: Mutex::new(0.75),
         }
     }
 }
 
-fn mix_for_type(t: u8) -> (NoiseMix, Option<(f32, f32)>) {
+fn noise_mix(t: u8) -> NoiseMix {
     match t {
-        0 => (NoiseMix::white(), None),
-        1 => (NoiseMix::pink(), None),
-        2 => (NoiseMix::brown(), None),
-        3 => (NoiseMix { white: 0.0, pink: 0.1, brown: 0.9 }, Some((2.0, 60.0))),
-        4 => (NoiseMix { white: 0.0, pink: 0.3, brown: 0.7 }, Some((6.0, 80.0))),
-        5 => (NoiseMix { white: 0.0, pink: 0.7, brown: 0.3 }, Some((10.0, 100.0))),
-        6 => (NoiseMix { white: 0.0, pink: 0.8, brown: 0.2 }, Some((18.0, 120.0))),
-        7 => (NoiseMix::pink(), Some((40.0, 140.0))),
-        _ => (NoiseMix::brown(), None),
+        0 => NoiseMix { white: 0.0, pink: 0.0, brown: 0.0 }, // off
+        1 => NoiseMix::white(),
+        2 => NoiseMix::pink(),
+        3 => NoiseMix::brown(),
+        _ => NoiseMix::brown(),
+    }
+}
+
+/// Binaural presets — only split freq and carrier. No noise changes.
+/// Binaural presets set split freq only. Carrier is user-adjustable (default 300 Hz).
+fn binaural_preset(t: u8) -> Option<f32> {
+    match t {
+        1 => Some(2.0),   // delta
+        2 => Some(6.0),   // theta
+        3 => Some(10.0),  // alpha
+        4 => Some(18.0),  // beta
+        5 => Some(40.0),  // gamma
+        _ => None,
     }
 }
 
@@ -68,86 +93,91 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
 
     let sample_rate = config.sample_rate().0 as f32;
     let channels = config.channels() as usize;
-
     let stream_config: cpal::StreamConfig = config.into();
 
     let mut rng = SmallRng::from_entropy();
     let mut gen = NoiseGen::new();
-    let (init_mix, init_bin) = mix_for_type(state.noise_type.load(Ordering::Relaxed));
-    if let Some((freq, base)) = init_bin {
-        *state.binaural_freq.lock().unwrap() = freq;
-        *state.binaural_base.lock().unwrap() = base;
-    }
-    let mut current_mix = init_mix;
-    let mut target_mix = current_mix;
 
-    // Preload all rain samples before starting the stream
+    // Each noise source has its own independent volume envelope
+    let init_type = state.noise_type.load(Ordering::Relaxed);
+    let mut white_target: f32 = if init_type == 1 { 1.0 } else { 0.0 };
+    let mut pink_target: f32 = if init_type == 2 { 1.0 } else { 0.0 };
+    let mut brown_target: f32 = if init_type == 3 { 1.0 } else { 0.0 };
+    let mut white_vol: f32 = white_target;
+    let mut pink_vol: f32 = pink_target;
+    let mut brown_vol: f32 = brown_target;
+
+    // Preload rain samples
     let rain_samples: [Option<samples::Sample>; 3] = [
         samples::load_sample(1),
         samples::load_sample(2),
         samples::load_sample(3),
     ];
-
     let mut rain_player: Option<samples::SamplePlayer> = None;
     let mut rain_outgoing: Option<samples::SamplePlayer> = None;
-    let rain_volume = 0.35f32;
-    let mut crossfade_progress = 1.0f32; // 1.0 = complete
 
-    // Stereo LFO state — slightly different phase for L and R
+    // Stereo LFO
     let mut lfo_phase_l: f32 = 0.0;
-    let mut lfo_phase_r: f32 = 0.33; // offset for stereo width
-    let lfo_rate = 0.04; // ~25 second cycle
+    let mut lfo_phase_r: f32 = 0.33;
+    let lfo_rate = 0.04;
 
-    // Binaural oscillator phase
+    // Binaural — pure sine, completely discrete L/R
     let mut bin_phase_l: f32 = 0.0;
     let mut bin_phase_r: f32 = 0.0;
-    // bin_base_freq read dynamically from state
+    let mut bin_fade: f32 = 0.0;
+    let mut bin_target_split: f32 = 0.0;
+    let mut bin_active_split: f32 = 0.0; // last non-zero split, used during fade-out
 
-    // Start at zero and ramp up (fade-in)
-    let mut current_vol: f32 = 0.0;
-
-    // Fade out state
-    let mut fade_out_vol = 1.0f32;
-
-    // Fade-in envelope
+    // Envelopes
+    let mut current_noise_vol: f32 = 0.0;
     let mut fade_in_vol = 0.0f32;
-
-    // Pause fade envelope
+    let mut fade_out_vol = 1.0f32;
     let mut pause_vol = 1.0f32;
 
     let stream = device.build_output_stream(
         &stream_config,
         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            let target_vol = *state.target_volume.lock().unwrap();
-            let binaural = *state.binaural_freq.lock().unwrap();
+            let target_nvol = *state.target_noise_vol.lock().unwrap();
+            let binaural_split = *state.binaural_freq.lock().unwrap();
+            let binaural_base = *state.binaural_base.lock().unwrap();
+            let bin_vol = *state.binaural_vol.lock().unwrap();
+            let rain_vol = *state.rain_vol.lock().unwrap();
             let lfo_depth = *state.modulation_depth.lock().unwrap();
             let paused = state.paused.load(Ordering::Relaxed);
             let fading = state.fade_out.load(Ordering::Relaxed);
 
-            // Check for noise type switch
+            // Noise type switch — just set targets, envelopes do the rest
             if state.pending_switch.load(Ordering::Relaxed) {
-                let (new_mix, new_bin) = mix_for_type(state.noise_type.load(Ordering::Relaxed));
-                target_mix = new_mix;
-                if let Some((freq, base)) = new_bin {
-                    *state.binaural_freq.lock().unwrap() = freq;
-                    *state.binaural_base.lock().unwrap() = base;
-                } else {
-                    *state.binaural_freq.lock().unwrap() = 0.0;
-                }
-                crossfade_progress = 0.0;
+                let t = state.noise_type.load(Ordering::Relaxed);
+                white_target = if t == 1 { 1.0 } else { 0.0 };
+                pink_target = if t == 2 { 1.0 } else { 0.0 };
+                brown_target = if t == 3 { 1.0 } else { 0.0 };
                 state.pending_switch.store(false, Ordering::Relaxed);
             }
 
-            // Check for rain toggle
+            // Binaural preset switch
+            if state.binaural_pending.load(Ordering::Relaxed) {
+                let preset = state.binaural_preset.load(Ordering::Relaxed);
+                if let Some(freq) = binaural_preset(preset) {
+                    bin_target_split = freq;
+                    bin_active_split = freq;
+                    *state.binaural_freq.lock().unwrap() = freq;
+                } else {
+                    bin_target_split = 0.0;
+                    // keep bin_active_split for fade-out
+                    *state.binaural_freq.lock().unwrap() = 0.0;
+                }
+                state.binaural_pending.store(false, Ordering::Relaxed);
+            }
+
+            // Rain toggle
             if state.rain_pending.load(Ordering::Relaxed) {
                 let rt = state.rain_type.load(Ordering::Relaxed);
-                // Move current player to outgoing (fade out)
                 if let Some(mut current) = rain_player.take() {
                     current.fading_out = true;
                     current.fading_in = false;
                     rain_outgoing = Some(current);
                 }
-                // Create new player from preloaded sample
                 if rt > 0 {
                     let idx = (rt - 1) as usize;
                     if let Some(ref sample) = rain_samples[idx] {
@@ -157,29 +187,36 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                 state.rain_pending.store(false, Ordering::Relaxed);
             }
 
-            // Clean up silent outgoing
             if rain_outgoing.as_ref().map_or(false, |p| p.is_silent()) {
                 rain_outgoing = None;
             }
 
-            let crossfade_speed = 1.0 / (sample_rate * 2.0); // 2 second crossfade
+            let ramp_speed = 1.0 / (sample_rate * 1.5); // 1.5s ramp per generator
 
             for frame in data.chunks_mut(channels) {
-                // Smooth volume ramping
-                let vol_speed = 1.0 / (sample_rate * 0.1); // 100ms ramp
-                if current_vol < target_vol {
-                    current_vol = (current_vol + vol_speed).min(target_vol);
-                } else if current_vol > target_vol {
-                    current_vol = (current_vol - vol_speed).max(target_vol);
+                // Noise master volume ramping
+                let vol_speed = 1.0 / (sample_rate * 0.1);
+                if current_noise_vol < target_nvol {
+                    current_noise_vol = (current_noise_vol + vol_speed).min(target_nvol);
+                } else if current_noise_vol > target_nvol {
+                    current_noise_vol = (current_noise_vol - vol_speed).max(target_nvol);
                 }
-                *state.volume.lock().unwrap() = current_vol;
+                *state.noise_vol.lock().unwrap() = current_noise_vol;
+
+                // Independent per-source envelope ramps
+                if white_vol < white_target { white_vol = (white_vol + ramp_speed).min(white_target); }
+                else if white_vol > white_target { white_vol = (white_vol - ramp_speed).max(white_target); }
+                if pink_vol < pink_target { pink_vol = (pink_vol + ramp_speed).min(pink_target); }
+                else if pink_vol > pink_target { pink_vol = (pink_vol - ramp_speed).max(pink_target); }
+                if brown_vol < brown_target { brown_vol = (brown_vol + ramp_speed).min(brown_target); }
+                else if brown_vol > brown_target { brown_vol = (brown_vol - ramp_speed).max(brown_target); }
 
                 // Fade in (750ms)
                 if fade_in_vol < 1.0 {
                     fade_in_vol = (fade_in_vol + 1.0 / (sample_rate * 0.75)).min(1.0);
                 }
 
-                // Fade out
+                // Fade out (quit/timer)
                 if fading {
                     let fade_dur = *state.fade_out_duration.lock().unwrap();
                     fade_out_vol -= 1.0 / (sample_rate * fade_dur);
@@ -197,71 +234,58 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                     pause_vol = (pause_vol + pause_speed).min(1.0);
                 }
                 if pause_vol <= 0.0 {
-                    for sample in frame.iter_mut() {
-                        *sample = 0.0;
-                    }
+                    for sample in frame.iter_mut() { *sample = 0.0; }
                     continue;
                 }
 
-                // Crossfade between mixes
-                if crossfade_progress < 1.0 {
-                    crossfade_progress = (crossfade_progress + crossfade_speed).min(1.0);
-                    if crossfade_progress >= 1.0 {
-                        current_mix = target_mix;
-                    }
-                }
+                // Generate noise — all generators run, mixed by their envelopes
+                let mix = NoiseMix { white: white_vol, pink: pink_vol, brown: brown_vol };
+                let (nl, nr) = gen.sample(&mut rng, &mix);
 
-                let mix = if crossfade_progress < 1.0 {
-                    NoiseMix::lerp(&current_mix, &target_mix, crossfade_progress)
-                } else {
-                    current_mix
-                };
-
-                let (mut l, mut r) = gen.sample(&mut rng, &mix);
-
-                // Mix in rain (current + outgoing for crossfade)
-                if let Some(ref mut player) = rain_player {
-                    let (rl, rr) = player.next_stereo(sample_rate);
-                    l += rl * rain_volume;
-                    r += rr * rain_volume;
-                }
-                if let Some(ref mut player) = rain_outgoing {
-                    let (rl, rr) = player.next_stereo(sample_rate);
-                    l += rl * rain_volume;
-                    r += rr * rain_volume;
-                }
-
-                // Stereo LFO modulation
+                // LFO modulation on noise
                 let lfo_l = 1.0 + (lfo_phase_l * std::f32::consts::TAU).sin() * lfo_depth;
                 let lfo_r = 1.0 + (lfo_phase_r * std::f32::consts::TAU).sin() * lfo_depth;
                 lfo_phase_l = (lfo_phase_l + lfo_rate / sample_rate) % 1.0;
                 lfo_phase_r = (lfo_phase_r + lfo_rate / sample_rate) % 1.0;
 
-                let mut out_l = l * lfo_l;
-                let mut out_r = r * lfo_r;
+                let mut out_l = nl * lfo_l * current_noise_vol;
+                let mut out_r = nr * lfo_r * current_noise_vol;
 
-                // Binaural beat — low sine layered under noise
-                if binaural > 0.0 {
-                    let base = *state.binaural_base.lock().unwrap();
-                    let freq_l = base;
-                    let freq_r = base + binaural;
-                    let bin_vol = *state.binaural_vol.lock().unwrap();
-                    // Fundamental + soft octave harmonic for body
-                    let sin_l = (bin_phase_l * std::f32::consts::TAU).sin();
-                    let sin_r = (bin_phase_r * std::f32::consts::TAU).sin();
-                    let harm_l = (bin_phase_l * 2.0 * std::f32::consts::TAU).sin() * 0.3;
-                    let harm_r = (bin_phase_r * 2.0 * std::f32::consts::TAU).sin() * 0.3;
-                    out_l += (sin_l + harm_l) * bin_vol;
-                    out_r += (sin_r + harm_r) * bin_vol;
+                // Rain — own volume
+                if let Some(ref mut player) = rain_player {
+                    let (rl, rr) = player.next_stereo(sample_rate);
+                    out_l += rl * rain_vol;
+                    out_r += rr * rain_vol;
+                }
+                if let Some(ref mut player) = rain_outgoing {
+                    let (rl, rr) = player.next_stereo(sample_rate);
+                    out_l += rl * rain_vol;
+                    out_r += rr * rain_vol;
+                }
+
+                // Binaural fade envelope (400ms)
+                let bin_fade_speed = 1.0 / (sample_rate * 0.4);
+                if bin_target_split > 0.0 {
+                    bin_fade = (bin_fade + bin_fade_speed).min(1.0);
+                } else {
+                    bin_fade = (bin_fade - bin_fade_speed).max(0.0);
+                }
+
+                // Binaural — pure sine, discrete per channel
+                if bin_fade > 0.0 {
+                    let freq_l = binaural_base;
+                    let freq_r = binaural_base + bin_active_split;
+                    out_l += (bin_phase_l * std::f32::consts::TAU).sin() * bin_vol * bin_fade;
+                    out_r += (bin_phase_r * std::f32::consts::TAU).sin() * bin_vol * bin_fade;
                     bin_phase_l = (bin_phase_l + freq_l / sample_rate) % 1.0;
                     bin_phase_r = (bin_phase_r + freq_r / sample_rate) % 1.0;
                 }
 
-                let vol = current_vol * fade_in_vol * fade_out_vol * pause_vol;
-                let final_l = (out_l * vol).clamp(-1.0, 1.0);
-                let final_r = (out_r * vol).clamp(-1.0, 1.0);
+                // Global envelope
+                let envelope = fade_in_vol * fade_out_vol * pause_vol;
+                let final_l = (out_l * envelope).clamp(-1.0, 1.0);
+                let final_r = (out_r * envelope).clamp(-1.0, 1.0);
 
-                // Output stereo or mono depending on channel count
                 match channels {
                     1 => frame[0] = (final_l + final_r) * 0.5,
                     _ => {

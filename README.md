@@ -4,12 +4,12 @@
 ![Platform](https://img.shields.io/badge/platform-macOS%20·%20Linux-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Open Source](https://img.shields.io/badge/open%20source-%E2%9D%A4-c4a7e7)
-![Audio](https://img.shields.io/badge/audio-white%20·%20pink%20·%20brown-89b4fa)
-![Binaural](https://img.shields.io/badge/binaural-delta%20·%20theta%20·%20alpha%20·%20beta%20·%20gamma-fab387)
+![Audio](https://img.shields.io/badge/audio-white%20·%20pink%20·%20brown-fab387)
+![Binaural](https://img.shields.io/badge/binaural-delta%20·%20theta%20·%20alpha%20·%20beta%20·%20gamma-cba6f7)
 
 Terminal noise generator for focus and concentration.
 
-Real-time stereo noise synthesis with binaural brainwave presets, rain overlay, smooth crossfading, subtle modulation, and a minimal TUI. Noise and binaural tones are generated in real-time — rain uses looping wav samples.
+Real-time stereo noise synthesis with binaural brainwave presets, rain overlay, and a minimal TUI. Noise and binaural tones are generated in real-time — rain uses looping wav samples.
 
 ## Install
 
@@ -23,31 +23,46 @@ cp target/release/noiz ~/.local/bin/
 ## Usage
 
 ```bash
-noiz                    # brown noise (default)
+noiz                    # brown noise (default, 30% vol)
 noiz white              # white noise
 noiz pink               # pink noise
-noiz delta              # deep sleep — 2 Hz binaural
-noiz theta              # meditation — 6 Hz binaural
-noiz alpha              # relaxed focus — 10 Hz binaural
-noiz beta               # active focus — 18 Hz binaural
-noiz gamma              # deep concentration — 40 Hz binaural
 noiz brown 45m          # timer — fade out after 45 minutes
-noiz pink -v 0.7        # set volume (0.0–1.0)
+noiz pink -v 0.5        # set noise volume (0.0–1.0)
 ```
 
-## Keybindings
+Everything else is controlled from the TUI — binaural presets, rain overlay, and all volumes.
+
+## TUI Navigation
+
+The interface is navigated with arrow keys:
+
+- `↑` `↓` — select parameter
+- `←` `→` — adjust value
+
+Selected parameters are shown with `[brackets]`.
+
+### Sources (top section)
+
+| Row | Options | Quick key |
+|-----|---------|-----------|
+| **noise** | off, white, pink, brown | `n` cycle |
+| **bin** | off, delta, theta, alpha, beta, gamma | `b` cycle |
+| **rain** | off, light, calm, heavy | `r` cycle |
+
+### Controls (bottom section)
+
+| Row | Range | What it does |
+|-----|-------|-------------|
+| **noise** vol | 0–100% | Noise volume |
+| **bin** vol | 0–100% | Binaural tone volume |
+| **rain** vol | 0–100% | Rain sample volume |
+| **tone** | 40–400 Hz | Binaural carrier frequency |
+| **mod** | 0–20% | Stereo LFO modulation depth |
+
+### Other keys
 
 | Key | Action |
 |-----|--------|
-| `1`-`3` | Noise type: white, pink, brown |
-| `4`-`8` | Binaural presets: delta, theta, alpha, beta, gamma |
-| `↑` / `↓` | Volume (1% steps) |
-| `[` / `]` | Modulation depth |
-| `b` | Toggle binaural on/off |
-| `←` / `→` | Binaural split frequency (0.1-40 Hz) |
-| `+` / `-` | Binaural base tone (20-300 Hz) |
-| `<` / `>` | Binaural volume |
-| `r` | Cycle rain overlay: off → light → calm → heavy → off |
 | `space` | Pause/resume (0.4s fade) |
 | `q` / `Esc` / `Ctrl+C` | Quit (750ms fade out) |
 
@@ -59,44 +74,46 @@ noiz pink -v 0.7        # set volume (0.0–1.0)
 | **pink** | Energy drops 3 dB/octave — natural, balanced |
 | **brown** | Energy drops 6 dB/octave — deep, dark, lowpass-filtered for warmth |
 
+Each noise generator runs independently with its own volume envelope — transitions between types are seamless with 1.5s crossfade.
+
 ## Binaural Presets
 
-Each preset pairs a noise mix with a binaural beat tuned to a specific brainwave band. The binaural effect is created by playing two discrete sine tones — one per ear — with a slight frequency difference. The brain perceives this difference as a rhythmic pulse at the target frequency.
+Binaural beats are created by playing two discrete sine tones — one per ear — with a slight frequency difference. The brain perceives this difference as a rhythmic pulse. **Requires headphones.**
 
-**Requires headphones** — binaural beats do not work over speakers.
+Presets are completely independent from noise — combine any noise type with any binaural preset.
 
-| Preset | Brainwave | Split | Tone | Noise Mix | Effect |
-|--------|-----------|-------|------|-----------|--------|
-| **delta** | 1-4 Hz | 2 Hz | 60 Hz | 10% pink + 90% brown | Deep sleep, healing |
-| **theta** | 4-8 Hz | 6 Hz | 80 Hz | 30% pink + 70% brown | Meditation, creativity |
-| **alpha** | 8-14 Hz | 10 Hz | 100 Hz | 70% pink + 30% brown | Relaxed focus, flow |
-| **beta** | 14-30 Hz | 18 Hz | 120 Hz | 80% pink + 20% brown | Active focus, energy |
-| **gamma** | 30-100 Hz | 40 Hz | 140 Hz | 100% pink | Deep concentration |
+| Preset | Brainwave | Split | Default carrier | Effect |
+|--------|-----------|-------|-----------------|--------|
+| **delta** | 1–4 Hz | 2 Hz | 200 Hz | Deep sleep, healing |
+| **theta** | 4–8 Hz | 6 Hz | 250 Hz | Meditation, creativity |
+| **alpha** | 8–14 Hz | 10 Hz | 300 Hz | Relaxed focus, flow |
+| **beta** | 14–30 Hz | 18 Hz | 350 Hz | Active focus, energy |
+| **gamma** | 30+ Hz | 40 Hz | 400 Hz | Deep concentration |
 
-Binaural can also be toggled manually with `b` and fine-tuned with arrow keys, independent of presets.
+Carrier frequency is adjustable (40–400 Hz) via the **tone** control.
 
 ## Rain Overlay
 
-Press `r` to cycle through rain samples layered on top of any noise/binaural preset:
+Rain samples are layered on top of any noise/binaural combination. Press `r` to cycle through:
 
-| Rain | Intensity | Animation |
-|------|-----------|-----------|
-| **light** | Gentle patter | 3 drops |
-| **calm** | Steady rain | 6 drops |
-| **heavy** | Downpour | 10 drops |
+| Rain | Description |
+|------|-------------|
+| **light** | Gentle patter |
+| **calm** | Steady rain |
+| **heavy** | Downpour |
 
-Rain samples are wav files loaded from `samples-rain/`. All transitions crossfade smoothly.
+Rain samples are wav files loaded from `samples-rain/`. Transitions crossfade smoothly with 500ms fade envelopes.
 
 ## Features
 
-- **Stereo** — independent noise generators per channel with subtle LFO phase offset for width
-- **Smooth transitions** — 2-second crossfade when switching noise types
-- **Fade in/out** — 750ms fade on start and quit, 0.4s fade on pause, 5s fade on timer expiry
-- **Modulation** — adjustable slow LFO on volume (different phase per channel) to prevent static feel
-- **Binaural beats** — discrete L/R sine tones with octave harmonic, preset or manual control
-- **Rain overlay** — looping wav samples with crossfade, layered on any preset
-- **Visualizer** — infinity symbol breathing with binaural, rain drops animated by intensity
-- **Timer** — supports `30s`, `45m`, `1h` durations with automatic fade out
+- **Three independent layers** — noise, binaural, and rain with separate volume controls
+- **Seamless transitions** — each noise generator has its own 1.5s volume envelope
+- **Fade in/out** — 750ms on start/quit, 0.4s on pause, 5s on timer expiry
+- **Stereo modulation** — adjustable slow LFO with different phase per channel
+- **Binaural beats** — pure discrete L/R sine tones, no channel bleed
+- **Rain overlay** — preloaded wav samples with crossfade looping
+- **Visualizer** — infinity symbol breathing with binaural, rain drops by intensity
+- **Timer** — supports `30s`, `45m`, `1h` with automatic fade out
 
 ## Stack
 
