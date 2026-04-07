@@ -47,6 +47,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
     let mut last_binaural: Option<u8> = None;
     let mut last_rain: Option<u8> = None;
     let mut show_help = false;
+    let mut compact = false;
 
     loop {
         let paused = state.paused.load(Ordering::Relaxed);
@@ -103,7 +104,9 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 Span::styled(status_icon, Style::default().fg(status_color)),
                 Span::styled(if paused { " paused" } else { "" }, Style::default().fg(dim)),
             ]));
-            lines.push(Line::from(Span::styled("  ──────────────────────────────────────────", Style::default().fg(subtle))));
+            if !compact {
+                lines.push(Line::from(Span::styled("  ──────────────────────────────────────────", Style::default().fg(subtle))));
+            }
 
             // Dimmed versions of source colors for sub-controls (tone, mod)
             let c_noise_dim = Color::Rgb(180, 130, 100);
@@ -164,26 +167,41 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
 
             // Noise source row
             let mut noise_line: Vec<Span> = source_label("noise", ROW_NOISE, c_noise, noise_active);
-            noise_line.extend(source_row(&NOISE_NAMES, noise_idx, noise_active));
+            if compact {
+                let name = NOISE_NAMES[noise_idx];
+                noise_line.push(Span::styled(name.to_string(), Style::default().fg(text)));
+            } else {
+                noise_line.extend(source_row(&NOISE_NAMES, noise_idx, noise_active));
+            }
             lines.push(Line::from(noise_line));
 
             // Binaural source row
             let mut bin_line: Vec<Span> = source_label("bin", ROW_BIN, c_bin, bin_active);
-            bin_line.push(Span::raw("  "));
-            bin_line.extend(source_row(&BIN_NAMES, bin_preset, bin_active));
+            if compact {
+                let name = BIN_NAMES[bin_preset];
+                bin_line.push(Span::styled(format!("  {name}"), Style::default().fg(text)));
+            } else {
+                bin_line.push(Span::raw("  "));
+                bin_line.extend(source_row(&BIN_NAMES, bin_preset, bin_active));
+            }
             lines.push(Line::from(bin_line));
 
             // Rain source row
             let mut rain_line: Vec<Span> = source_label("rain", ROW_RAIN, c_rain, rain_active);
-            rain_line.push(Span::raw(" "));
-            rain_line.extend(source_row(&RAIN_NAMES, rain_type, rain_active));
+            if compact {
+                let name = RAIN_NAMES[rain_type];
+                rain_line.push(Span::styled(format!(" {name}"), Style::default().fg(text)));
+            } else {
+                rain_line.push(Span::raw(" "));
+                rain_line.extend(source_row(&RAIN_NAMES, rain_type, rain_active));
+            }
             lines.push(Line::from(rain_line));
 
             // Separator
-            lines.push(Line::from(""));
+            if !compact { lines.push(Line::from("")); }
 
             // Volume/control bars
-            let bar_len = 20;
+            let bar_len = if compact { 12 } else { 20 };
 
             let make_bar = |val: f32, color: Color, active: bool| -> String {
                 let c = if active { color } else { surface };
@@ -233,32 +251,34 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             lines.push(Line::from(mod_line));
 
             // Contextual info — relevant to what we're navigating
-            let info_text: Option<String> = match selected_row {
-                ROW_NOISE | ROW_NOISE_VOL | ROW_MOD => {
-                    let n = NOISE_NAMES.get(noise_idx).unwrap_or(&"?");
-                    Some(format!("  {n}  vol {:.0}%  mod {:.0}%", noise_vol * 100.0, modulation * 100.0))
-                }
-                ROW_BIN | ROW_BIN_VOL | ROW_BIN_CARRIER => {
-                    if binaural > 0.0 {
-                        let band = if binaural <= 4.0 { "delta" }
-                            else if binaural <= 8.0 { "theta" }
-                            else if binaural <= 14.0 { "alpha" }
-                            else if binaural <= 30.0 { "beta" }
-                            else { "gamma" };
-                        let disp = if binaural < 1.0 { format!("{binaural:.1}") } else { format!("{binaural:.0}") };
-                        Some(format!("  {disp} Hz {band}  carrier {bin_base:.0} Hz  vol {:.0}%", bin_vol * 100.0))
-                    } else {
-                        Some("  binaural off".to_string())
+            if !compact {
+                let info_text: Option<String> = match selected_row {
+                    ROW_NOISE | ROW_NOISE_VOL | ROW_MOD => {
+                        let n = NOISE_NAMES.get(noise_idx).unwrap_or(&"?");
+                        Some(format!("  {n}  vol {:.0}%  mod {:.0}%", noise_vol * 100.0, modulation * 100.0))
                     }
+                    ROW_BIN | ROW_BIN_VOL | ROW_BIN_CARRIER => {
+                        if binaural > 0.0 {
+                            let band = if binaural <= 4.0 { "delta" }
+                                else if binaural <= 8.0 { "theta" }
+                                else if binaural <= 14.0 { "alpha" }
+                                else if binaural <= 30.0 { "beta" }
+                                else { "gamma" };
+                            let disp = if binaural < 1.0 { format!("{binaural:.1}") } else { format!("{binaural:.0}") };
+                            Some(format!("  {disp} Hz {band}  carrier {bin_base:.0} Hz  vol {:.0}%", bin_vol * 100.0))
+                        } else {
+                            Some("  binaural off".to_string())
+                        }
+                    }
+                    ROW_RAIN | ROW_RAIN_VOL => {
+                        let r = RAIN_NAMES.get(rain_type).unwrap_or(&"?");
+                        Some(format!("  {r}  vol {:.0}%", rain_vol * 100.0))
+                    }
+                    _ => None,
+                };
+                if let Some(info) = info_text {
+                    lines.push(Line::from(Span::styled(info, Style::default().fg(dim))));
                 }
-                ROW_RAIN | ROW_RAIN_VOL => {
-                    let r = RAIN_NAMES.get(rain_type).unwrap_or(&"?");
-                    Some(format!("  {r}  vol {:.0}%", rain_vol * 100.0))
-                }
-                _ => None,
-            };
-            if let Some(info) = info_text {
-                lines.push(Line::from(Span::styled(info, Style::default().fg(dim))));
             }
 
             // Timer
@@ -269,10 +289,13 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 ]));
             }
 
-            // Animations — three side by side: noise slope, binaural pulse, rain drops
+            // Keep animation time updated even in compact mode
             let now_inst = Instant::now();
             if !paused { anim_time += (now_inst - last_frame).as_secs_f32(); }
             last_frame = now_inst;
+
+            // Animations — three side by side: noise slope, binaural pulse, rain drops
+            if !compact {
             let elapsed = anim_time;
             let anim_rows = 3;
             let anim_w = 10;
@@ -434,22 +457,33 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             }
 
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled("  ──────────────────────────────────────────", Style::default().fg(subtle))));
+            } // end !compact animations
 
-            lines.push(Line::from(vec![
-                Span::styled("  i", Style::default().fg(text)),
-                Span::styled("nfo  ", Style::default().fg(dim)),
-                Span::styled("m", Style::default().fg(green)),
-                Span::styled("ute  ", Style::default().fg(dim)),
-                Span::styled("q", Style::default().fg(red)),
-                Span::styled("uit", Style::default().fg(dim)),
-            ]));
+            if !compact {
+                lines.push(Line::from(Span::styled("  ──────────────────────────────────────────", Style::default().fg(subtle))));
 
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(surface))
-                .border_type(ratatui::widgets::BorderType::Rounded)
-                .padding(Padding::new(1, 1, 1, 0));
+                lines.push(Line::from(vec![
+                    Span::styled("  i", Style::default().fg(text)),
+                    Span::styled("nfo  ", Style::default().fg(dim)),
+                    Span::styled("m", Style::default().fg(green)),
+                    Span::styled("ute  ", Style::default().fg(dim)),
+                    Span::styled("c", Style::default().fg(text)),
+                    Span::styled("ompact  ", Style::default().fg(dim)),
+                    Span::styled("q", Style::default().fg(red)),
+                    Span::styled("uit", Style::default().fg(dim)),
+                ]));
+            }
+
+            let block = if compact {
+                Block::default()
+                    .padding(Padding::new(1, 0, 0, 0))
+            } else {
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(surface))
+                    .border_type(ratatui::widgets::BorderType::Rounded)
+                    .padding(Padding::new(1, 1, 1, 0))
+            };
 
             let paragraph = Paragraph::new(lines).block(block);
             frame.render_widget(paragraph, area);
@@ -491,6 +525,10 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                     Line::from(vec![
                         Span::styled("  m                 ", Style::default().fg(green)),
                         Span::styled("mute/unmute", Style::default().fg(dim)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  c                 ", Style::default().fg(text)),
+                        Span::styled("compact mode", Style::default().fg(dim)),
                     ]),
                     Line::from(vec![
                         Span::styled("  q / esc           ", Style::default().fg(red)),
@@ -541,6 +579,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                 }
 
                 match key.code {
+                    KeyCode::Char('c') => { compact = !compact; }
                     KeyCode::Char('i') => { show_help = true; }
                     KeyCode::Char('m') => {
                         state.paused.store(!state.paused.load(Ordering::Relaxed), Ordering::Relaxed);

@@ -65,6 +65,7 @@ Shift toggles remember your last active setting per source.
 | Key | Action |
 |-----|--------|
 | `m` | Mute/unmute (0.4s fade) |
+| `c` | Compact mode — no border, no animations, short bars, active source only |
 | `i` | Info overlay |
 | `q` / `Esc` / `Ctrl+C` | Quit (750ms fade out) |
 
