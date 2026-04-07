@@ -36,6 +36,7 @@ pub struct AudioState {
 
     // Timer end signal
     pub timer_signal: AtomicBool,
+    pub tone_click: AtomicBool,
 }
 
 impl AudioState {
@@ -62,6 +63,7 @@ impl AudioState {
             fade_out_duration: Mutex::new(0.75),
 
             timer_signal: AtomicBool::new(false),
+            tone_click: AtomicBool::new(false),
         }
     }
 }
@@ -161,6 +163,12 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
     let mut sig_sample: usize = 0;
     let mut sig_phase: f32 = 0.0;
 
+    // Click tone — single dit on timer toggle
+    let mut click_active = false;
+    let mut click_sample: usize = 0;
+    let mut click_phase: f32 = 0.0;
+    let click_len = sig_unit; // 130ms, same as one dit
+
     let stream = device.build_output_stream(
         &stream_config,
         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
@@ -253,14 +261,25 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                             state.paused.store(true, Ordering::Relaxed);
                         }
                     }
+                } else if fade_out_vol < 1.0 {
+                    // Recovering from fade-out (timer ended, user resumed)
+                    fade_out_vol = (fade_out_vol + 1.0 / (sample_rate * 0.75)).min(1.0);
                 }
 
-                // Start timer signal when flag is set (driven by TUI 1s delay)
+                // Start timer signal when flag is set (driven by TUI 2s delay)
                 if state.timer_signal.load(Ordering::Relaxed) && !sig_active {
                     sig_active = true;
                     sig_sample = 0;
                     sig_phase = 0.0;
                     state.timer_signal.store(false, Ordering::Relaxed);
+                }
+
+                // Click tone on timer toggle
+                if state.tone_click.load(Ordering::Relaxed) {
+                    click_active = true;
+                    click_sample = 0;
+                    click_phase = 0.0;
+                    state.tone_click.store(false, Ordering::Relaxed);
                 }
 
                 // Pause fade (0.4s)
@@ -301,7 +320,22 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                     }
                 }
 
-                if pause_vol <= 0.0 && !sig_active && sig_out == 0.0 {
+                // Click tone (single dit)
+                if click_active {
+                    let ramp_env = if click_sample < sig_ramp {
+                        click_sample as f32 / sig_ramp as f32
+                    } else if click_sample >= click_len - sig_ramp {
+                        (click_len - 1 - click_sample) as f32 / sig_ramp as f32
+                    } else {
+                        1.0
+                    };
+                    sig_out += (click_phase * std::f32::consts::TAU).sin() * sig_vol * ramp_env;
+                    click_phase = (click_phase + sig_freq / sample_rate) % 1.0;
+                    click_sample += 1;
+                    if click_sample >= click_len { click_active = false; }
+                }
+
+                if pause_vol <= 0.0 && !sig_active && !click_active && sig_out == 0.0 {
                     for sample in frame.iter_mut() { *sample = 0.0; }
                     continue;
                 }

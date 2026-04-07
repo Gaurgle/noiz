@@ -50,6 +50,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
     let mut compact = false;
     let mut timer_end = timer_end;
     let mut timer_mode: u8 = if timer_end.is_some() { 1 } else { 0 }; // 0=off, 1=45m, 2=1h
+    let mut timer_fired = false;
     let mut signal_at: Option<Instant> = None;
 
     loop {
@@ -71,10 +72,11 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
         });
 
         if let Some(end) = timer_end {
-            if Instant::now() >= end && !state.fade_out.load(Ordering::Relaxed) {
+            if Instant::now() >= end && !timer_fired {
                 *state.fade_out_duration.lock().unwrap() = 5.0;
                 state.fade_out.store(true, Ordering::Relaxed);
                 signal_at = Some(Instant::now() + Duration::from_secs(2));
+                timer_fired = true;
             }
         }
 
@@ -606,10 +608,21 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                             3 => Some(Instant::now() + Duration::from_secs(60 * 60)),
                             _ => None,
                         };
+                        state.fade_out.store(false, Ordering::Relaxed);
+                        state.paused.store(false, Ordering::Relaxed);
+                        timer_fired = false;
+                        signal_at = None;
+                        if timer_end.is_some() {
+                            state.tone_click.store(true, Ordering::Relaxed);
+                        }
                     }
                     KeyCode::Char('i') => { show_help = true; }
                     KeyCode::Char('m') => {
-                        state.paused.store(!state.paused.load(Ordering::Relaxed), Ordering::Relaxed);
+                        let was_paused = state.paused.load(Ordering::Relaxed);
+                        if was_paused && state.fade_out.load(Ordering::Relaxed) {
+                            state.fade_out.store(false, Ordering::Relaxed);
+                        }
+                        state.paused.store(!was_paused, Ordering::Relaxed);
                     }
                     KeyCode::Up | KeyCode::Char('k') => { selected_row = next_row(selected_row, -1); }
                     KeyCode::Down | KeyCode::Char('j') => { selected_row = next_row(selected_row, 1); }
