@@ -49,7 +49,7 @@ impl AudioState {
 
             binaural_preset: AtomicU8::new(0), // off
             binaural_freq: Mutex::new(0.0),
-            binaural_base: Mutex::new(300.0), // 300 Hz default carrier
+            binaural_base: Mutex::new(140.0), // 300 Hz default carrier
             binaural_vol: Mutex::new(0.16),
             binaural_pending: AtomicBool::new(false),
 
@@ -60,7 +60,7 @@ impl AudioState {
             paused: AtomicBool::new(false),
             modulation_depth: Mutex::new(0.08),
             fade_out: AtomicBool::new(false),
-            fade_out_duration: Mutex::new(0.75),
+            fade_out_duration: Mutex::new(0.65),
 
             timer_signal: AtomicBool::new(false),
             tone_click: AtomicBool::new(false),
