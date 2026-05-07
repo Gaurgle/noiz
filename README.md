@@ -9,7 +9,7 @@
 
 Terminal noise generator for focus and concentration.
 
-Real-time stereo noise synthesis with binaural brainwave presets, rain overlay, and a minimal TUI. Noise and binaural tones are generated in real-time — rain uses looping wav samples.
+Real-time stereo noise synthesis with binaural brainwave presets, rain overlay, and a minimal TUI. Noise and binaural tones are generated in real-time, while rain uses looping wav samples.
 
 ![noiz TUI](noiz-3.png)
 
@@ -33,14 +33,14 @@ cargo install --path .
 noiz                    # brown noise (default, 30% vol)
 noiz white              # white noise
 noiz pink               # pink noise
-noiz brown 45m          # timer — fade out after 45 minutes
+noiz brown 45m          # timer, fade out after 45 minutes
 noiz brown 1h           # any duration: 30s, 15m, 2h, etc.
 noiz pink -v 0.5        # set noise volume (0.0–1.0)
 ```
 
 Press `t` in the TUI to cycle preset timers (15m, 45m, 1h), or pass any duration via CLI.
 
-Everything else is controlled from the TUI — binaural presets, rain overlay, and all volumes.
+Everything else is controlled from the TUI: binaural presets, rain overlay, and all volumes.
 
 ## TUI Controls
 
@@ -48,7 +48,7 @@ Navigate with `hjkl` (vim) or arrow keys. Selected parameters are shown with `[b
 
 ### Sources
 
-Source labels highlight the first letter as a keybind hint — the rest lights up in color when active.
+Source labels highlight the first letter as a keybind hint. The rest lights up in color when active.
 
 | Row | Options | Keys |
 |-----|---------|------|
@@ -74,7 +74,7 @@ Shift toggles remember your last active setting per source.
 |-----|--------|
 | `t` | Timer presets: 15m → 45m → 1h → off. Fades out + morse "end" signal |
 | `m` | Mute/unmute (0.4s fade) |
-| `c` | Compact mode — no border, no animations, short bars, active source only |
+| `c` | Compact mode (no border, no animations, short bars, active source only) |
 | `i` | Info overlay |
 | `q` / `Esc` / `Ctrl+C` | Quit (750ms fade out) |
 
@@ -82,17 +82,17 @@ Shift toggles remember your last active setting per source.
 
 | Type | Description |
 |------|-------------|
-| **white** | Equal energy across all frequencies — gain-balanced for perceived loudness |
-| **pink** | Energy drops 3 dB/octave — natural, balanced |
-| **brown** | Energy drops 6 dB/octave — deep, dark, lowpass-filtered for warmth |
+| **white** | Equal energy across all frequencies, gain-balanced for perceived loudness |
+| **pink** | Energy drops 3 dB/octave (natural, balanced) |
+| **brown** | Energy drops 6 dB/octave (deep, dark, lowpass-filtered for warmth) |
 
-Each noise generator runs independently with its own volume envelope — transitions between types are seamless with 1.5s crossfade.
+Each noise generator runs independently with its own volume envelope. Transitions between types are seamless with 1.5s crossfade.
 
 ## Binaural Presets
 
-Binaural beats are created by playing two discrete sine tones — one per ear — with a slight frequency difference. The brain perceives this difference as a rhythmic pulse. **Requires headphones.**
+Binaural beats are created by playing two discrete sine tones (one per ear) with a slight frequency difference. The brain perceives this difference as a rhythmic pulse. **Requires headphones.**
 
-Presets are completely independent from noise — combine any noise type with any binaural preset.
+Presets are completely independent from noise, so you can combine any noise type with any binaural preset.
 
 | Preset | Brainwave | Split | Default carrier | Effect |
 |--------|-----------|-------|-----------------|--------|
@@ -106,7 +106,7 @@ Carrier frequency is adjustable (40–400 Hz) via the **tone** control.
 
 ## Rain Overlay (experimental)
 
-> Rain is a work in progress — sample quality is being improved. It only works when running noiz from the cloned repo directory.
+> Rain is a work in progress; sample quality is being improved. It only works when running noiz from the cloned repo directory.
 
 Rain samples are layered on top of any noise/binaural combination. Press `r` to cycle through:
 
@@ -120,14 +120,14 @@ Samples are loaded from `samples-rain/` relative to the binary or current direct
 
 ## Features
 
-- **Three independent layers** — noise, binaural, and rain with separate volume controls
-- **Seamless transitions** — each noise generator has its own 1.5s volume envelope
-- **Fade in/out** — 750ms on start/quit, 0.4s on pause, 5s on timer expiry
-- **Stereo modulation** — adjustable slow LFO with different phase per channel
-- **Binaural beats** — pure discrete L/R sine tones, no channel bleed
-- **Rain overlay** — preloaded wav samples with crossfade looping
-- **Visualizer** — spectrum bars for noise, L/R sweep for binaural, rain drops by intensity
-- **Timer** — preset 15m/45m/1h via `t` in the TUI, or any duration via CLI (`30s`, `2h`, etc.). Fades out, plays a morse "end" signal, stays open
+- **Three independent layers**: noise, binaural, and rain with separate volume controls
+- **Seamless transitions**: each noise generator has its own 1.5s volume envelope
+- **Fade in/out**: 750ms on start/quit, 0.4s on pause, 5s on timer expiry
+- **Stereo modulation**: adjustable slow LFO with different phase per channel
+- **Binaural beats**: pure discrete L/R sine tones, no channel bleed
+- **Rain overlay**: preloaded wav samples with crossfade looping
+- **Visualizer**: spectrum bars for noise, L/R sweep for binaural, rain drops by intensity
+- **Timer**: preset 15m/45m/1h via `t` in the TUI, or any duration via CLI (`30s`, `2h`, etc.). Fades out, plays a morse "end" signal, stays open
 
 ## Stack
 
@@ -135,5 +135,5 @@ Rust, [cpal](https://github.com/RustAudio/cpal), [ratatui](https://github.com/ra
 
 ## See Also
 
-- [repoz](https://github.com/Gaurgle/repos-cli) — terminal dashboard for managing multiple git repos
-- [notez](https://github.com/Gaurgle/notez-cli) — fast terminal note-taking with fuzzy search
+- [repoz](https://github.com/Gaurgle/repos-cli): terminal dashboard for managing multiple git repos
+- [notez](https://github.com/Gaurgle/notez-cli): fast terminal note-taking with fuzzy search
