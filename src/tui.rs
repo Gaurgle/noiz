@@ -156,7 +156,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             // Header
             lines.push(Line::from(vec![
                 Span::styled("  noiz", Style::default().fg(c_bin).add_modifier(Modifier::BOLD)),
-                Span::styled("  ", Style::default()),
+                Span::styled("   ", Style::default()),
                 Span::styled(status_icon, Style::default().fg(status_color)),
                 Span::styled(if paused { " paused" } else { "" }, Style::default().fg(dim)),
             ]));
@@ -452,54 +452,54 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
 
                 spans.push(Span::raw("  "));
 
-                // Binaural L/R pulse — single spot sweeping left↔right
+                // Binaural L/R pulse — a soft blob sweeps left↔right. Columns 1 and
+                // bin_w-2 are a fixed blank gap on every row, so the blob can never
+                // reach (or visually "eat") the L/R glyphs at the edges.
                 let bin_w = anim_w;
+                let gap = 1;
+                let inner_w = bin_w - 2 - 2 * gap;
+                let shades = [' ', '░', '▒', '▓', '█'];
                 for i in 0..bin_w {
-                    let col_pos = (i as f32 / (bin_w - 1) as f32) * 2.0 - 1.0; // -1..+1
-                    let dist = (col_pos - bin_focus).abs();
-                    let intensity = (1.0 - dist * 0.8).clamp(0.0, 1.0);
-
-                    // L/R labels at edges
-                    if i == 0 && row_idx == 1 {
-                        let br = intensity;
+                    if i == 0 || i == bin_w - 1 {
+                        let is_left = i == 0;
+                        if row_idx != 1 {
+                            spans.push(Span::raw(" "));
+                            continue;
+                        }
+                        let edge_pos = if is_left { -1.0 } else { 1.0 };
+                        let br = (1.0 - (edge_pos - bin_focus).abs() * 0.8).clamp(0.0, 1.0);
                         let c = if !bin_active { surface }
                             else { Color::Rgb(
                                 (80.0 + br * 123.0) as u8,
                                 (70.0 + br * 96.0) as u8,
                                 (110.0 + br * 137.0) as u8,
                             )};
-                        spans.push(Span::styled("L", Style::default().fg(c)));
+                        spans.push(Span::styled(if is_left { "L" } else { "R" }, Style::default().fg(c)));
                         continue;
                     }
-                    if i == bin_w - 1 && row_idx == 1 {
-                        let br = intensity;
-                        let c = if !bin_active { surface }
-                            else { Color::Rgb(
-                                (80.0 + br * 123.0) as u8,
-                                (70.0 + br * 96.0) as u8,
-                                (110.0 + br * 137.0) as u8,
-                            )};
-                        spans.push(Span::styled("R", Style::default().fg(c)));
+                    if i == gap || i == bin_w - 1 - gap {
+                        spans.push(Span::raw(" "));
                         continue;
                     }
 
-                    let show = match row_idx {
-                        1 => intensity > 0.05,
-                        0 | 2 => intensity > 0.4,
-                        _ => false,
-                    };
-                    if show && bin_active {
-                        let ch = if intensity > 0.7 { '█' }
-                            else if intensity > 0.4 { '▓' }
-                            else { '░' };
+                    let j = i - 1 - gap; // 0..inner_w, position within the pulse field
+                    let col_pos = (j as f32 / (inner_w - 1) as f32) * 2.0 - 1.0; // -1..+1
+                    let h_dist = col_pos - bin_focus;
+                    let v_dist = (row_idx as f32 - 1.0) * 0.55; // squashed so the blob reads as round, not tall
+                    let dist = (h_dist * h_dist + v_dist * v_dist).sqrt();
+                    let intensity = if bin_active { (1.0 - dist * 0.9).clamp(0.0, 1.0) } else { 0.0 };
+                    let shade_idx = (intensity * (shades.len() - 1) as f32).round() as usize;
+                    let ch = shades[shade_idx];
+
+                    if ch == ' ' {
+                        spans.push(Span::styled(" ", Style::default().fg(surface)));
+                    } else {
                         let c = Color::Rgb(
                             (55.0 + intensity * 148.0) as u8,
                             (57.0 + intensity * 109.0) as u8,
                             (75.0 + intensity * 172.0) as u8,
                         );
                         spans.push(Span::styled(ch.to_string(), Style::default().fg(c)));
-                    } else {
-                        spans.push(Span::styled(" ", Style::default().fg(surface)));
                     }
                 }
 
