@@ -5,7 +5,6 @@
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Open Source](https://img.shields.io/badge/open%20source-%E2%9D%A4-c4a7e7)
 ![Audio](https://img.shields.io/badge/audio-white%20·%20pink%20·%20brown-fab387)
-![Binaural](https://img.shields.io/badge/binaural%20brown)
 
 Terminal noise generator for focus and concentration.
 
