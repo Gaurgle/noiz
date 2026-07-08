@@ -35,7 +35,7 @@ noiz white              # white noise
 noiz pink               # pink noise
 noiz brown 45m          # timer, fade out after 45 minutes
 noiz brown 1h           # any duration: 30s, 15m, 2h, etc.
-noiz pink -v 0.5        # set noise volume (0.0–1.0)
+noiz pink -v 0.5        # set noise volume (0.0-1.0)
 ```
 
 Press `t` in the TUI to cycle preset timers (15m, 45m, 1h), or pass any duration via CLI.
@@ -62,18 +62,21 @@ Shift toggles remember your last active setting per source.
 
 | Row | Range | What it does |
 |-----|-------|-------------|
-| **noise** vol | 0–100% | Noise volume |
-| **bin** vol | 0–100% | Binaural tone volume |
-| **rain** vol | 0–100% | Rain sample volume |
-| **tone** | 40–400 Hz | Binaural carrier frequency |
-| **mod** | 0–20% | Stereo LFO modulation depth |
+| **noise** vol | 0-100% | Noise volume |
+| **bin** vol | 0-100% | Binaural tone volume |
+| **rain** vol | 0-100% | Rain sample volume |
+| **tone** | 40-400 Hz | Binaural carrier frequency |
+| **mod** | 0-20% | Stereo LFO modulation depth |
 
 ### Other keys
 
 | Key | Action |
 |-----|--------|
 | `t` | Timer presets: 15m → 45m → 1h → off. Fades out + morse "end" signal |
+| `h`/`l` or `←`/`→` on the timer row | ±1 minute (select the `tmr` row to tweak) |
+| `Shift`+`h`/`l` or `Shift`+`←`/`→` on the timer row | ±1 second |
 | `m` | Mute/unmute (0.4s fade) |
+| `p` | Pause: mute and freeze the timer countdown. Press again to resume |
 | `c` | Compact mode (no border, no animations, short bars, active source only) |
 | `i` | Info overlay |
 | `q` / `Esc` / `Ctrl+C` | Quit (750ms fade out) |
@@ -96,13 +99,13 @@ Presets are completely independent from noise, so you can combine any noise type
 
 | Preset | Brainwave | Split | Default carrier | Effect |
 |--------|-----------|-------|-----------------|--------|
-| **delta** | 1–4 Hz | 2 Hz | 200 Hz | Deep sleep, healing |
-| **theta** | 4–8 Hz | 6 Hz | 250 Hz | Meditation, creativity |
-| **alpha** | 8–14 Hz | 10 Hz | 300 Hz | Relaxed focus, flow |
-| **beta** | 14–30 Hz | 18 Hz | 350 Hz | Active focus, energy |
+| **delta** | 1-4 Hz | 2 Hz | 200 Hz | Deep sleep, healing |
+| **theta** | 4-8 Hz | 6 Hz | 250 Hz | Meditation, creativity |
+| **alpha** | 8-14 Hz | 10 Hz | 300 Hz | Relaxed focus, flow |
+| **beta** | 14-30 Hz | 18 Hz | 350 Hz | Active focus, energy |
 | **gamma** | 30+ Hz | 40 Hz | 400 Hz | Deep concentration |
 
-Carrier frequency is adjustable (40–400 Hz) via the **tone** control.
+Carrier frequency is adjustable (40-400 Hz) via the **tone** control.
 
 ## Rain Overlay (experimental)
 

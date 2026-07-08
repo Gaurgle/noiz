@@ -103,7 +103,7 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
     let stream_config: cpal::StreamConfig = config.into();
 
     let mut rng = SmallRng::from_entropy();
-    let mut gen = NoiseGen::new();
+    let mut noise_gen = NoiseGen::new();
 
     // Each noise source has its own independent volume envelope
     let init_type = state.noise_type.load(Ordering::Relaxed);
@@ -342,7 +342,7 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
 
                 // Generate noise — all generators run, mixed by their envelopes
                 let mix = NoiseMix { white: white_vol, pink: pink_vol, brown: brown_vol };
-                let (nl, nr) = gen.sample(&mut rng, &mix);
+                let (nl, nr) = noise_gen.sample(&mut rng, &mix);
 
                 // LFO modulation on noise
                 let lfo_l = 1.0 + (lfo_phase_l * std::f32::consts::TAU).sin() * lfo_depth;

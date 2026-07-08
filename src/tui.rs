@@ -23,7 +23,8 @@ const ROW_BIN_VOL: usize = 5;
 const ROW_RAIN_VOL: usize = 6;
 const ROW_BIN_CARRIER: usize = 7;
 const ROW_MOD: usize = 8;
-const ROW_COUNT: usize = 9;
+const ROW_TIMER: usize = 9;
+const ROW_COUNT: usize = 10;
 
 fn row_selectable(r: usize) -> bool {
     r != ROW_SEP
@@ -34,6 +35,40 @@ fn next_row(current: usize, dir: i32) -> usize {
     loop {
         r = ((r as i32 + dir).rem_euclid(ROW_COUNT as i32)) as usize;
         if row_selectable(r) { return r; }
+    }
+}
+
+// Adjusts the timer by delta_secs (positive to add, negative to subtract),
+// working against whichever representation is currently active (paused
+// remaining-time snapshot, or the live end instant). Clamps at zero/off.
+//
+// Operates directly on Instant/Duration rather than rounding through
+// `.as_secs()` — flooring to whole seconds on every keypress would bleed
+// off the sub-second remainder each time, so repeated adjustments while
+// the timer is running would silently lose up to ~1s per press.
+fn adjust_timer_by(
+    timer_end: &mut Option<Instant>,
+    timer_paused_remaining: &mut Option<Duration>,
+    timer_mode: &mut u8,
+    delta_secs: i64,
+) {
+    *timer_mode = 0; // manual tweak no longer matches a preset label
+    let now = Instant::now();
+    let delta = Duration::from_secs(delta_secs.unsigned_abs());
+
+    if let Some(remaining) = timer_paused_remaining {
+        *remaining = if delta_secs >= 0 {
+            *remaining + delta
+        } else {
+            remaining.saturating_sub(delta)
+        };
+    } else {
+        let base = timer_end.map(|e| if e > now { e } else { now }).unwrap_or(now);
+        *timer_end = if delta_secs >= 0 {
+            Some(base + delta)
+        } else {
+            base.checked_sub(delta).filter(|e| *e > now)
+        };
     }
 }
 
@@ -53,6 +88,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
     let mut timer_mode: u8 = if timer_end.is_some() { 1 } else { 0 }; // 0=off, 1=45m, 2=1h
     let mut timer_fired = false;
     let mut signal_at: Option<Instant> = None;
+    let mut timer_paused_remaining: Option<Duration> = None;
 
     loop {
         let paused = state.paused.load(Ordering::Relaxed);
@@ -66,18 +102,25 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
         let rain_vol = *state.rain_vol.lock().unwrap();
         let modulation = *state.modulation_depth.lock().unwrap();
 
-        let timer_str = timer_end.map(|end| {
-            let now = Instant::now();
-            if now >= end { "done".to_string() }
-            else { let s = (end - now).as_secs(); format!("{}:{:02}", s / 60, s % 60) }
-        });
+        let timer_str = if let Some(remaining) = timer_paused_remaining {
+            let s = remaining.as_secs();
+            Some(format!("{}:{:02}", s / 60, s % 60))
+        } else {
+            timer_end.map(|end| {
+                let now = Instant::now();
+                if now >= end { "done".to_string() }
+                else { let s = (end - now).as_secs(); format!("{}:{:02}", s / 60, s % 60) }
+            })
+        };
 
-        if let Some(end) = timer_end {
-            if Instant::now() >= end && !timer_fired {
-                *state.fade_out_duration.lock().unwrap() = 5.0;
-                state.fade_out.store(true, Ordering::Relaxed);
-                signal_at = Some(Instant::now() + Duration::from_secs(2));
-                timer_fired = true;
+        if timer_paused_remaining.is_none() {
+            if let Some(end) = timer_end {
+                if Instant::now() >= end && !timer_fired {
+                    *state.fade_out_duration.lock().unwrap() = 5.0;
+                    state.fade_out.store(true, Ordering::Relaxed);
+                    signal_at = Some(Instant::now() + Duration::from_secs(2));
+                    timer_fired = true;
+                }
             }
         }
 
@@ -287,6 +330,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                         let r = RAIN_NAMES.get(rain_type).unwrap_or(&"?");
                         Some(format!("  {r}  vol {:.0}%", rain_vol * 100.0))
                     }
+                    ROW_TIMER => Some("  h/l ±1m  shift+h/l ±1s  t presets".to_string()),
                     _ => None,
                 };
                 if let Some(info) = info_text {
@@ -295,13 +339,27 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             }
 
             // Timer
-            if let Some(ref t) = timer_str {
+            {
                 let mode_label = match timer_mode { 1 => "15m", 2 => "45m", 3 => "1h", _ => "" };
-                lines.push(Line::from(vec![
-                    Span::styled("  tmr ", Style::default().fg(dim)),
-                    Span::styled(t.clone(), Style::default().fg(yellow)),
-                    Span::styled(format!("  {mode_label}"), Style::default().fg(dim)),
-                ]));
+                let mut tmr_line: Vec<Span> = if selected_row == ROW_TIMER {
+                    vec![
+                        Span::styled(" [".to_string(), Style::default().fg(yellow)),
+                        Span::styled("tmr".to_string(), Style::default().fg(yellow)),
+                        Span::styled("] ".to_string(), Style::default().fg(yellow)),
+                    ]
+                } else {
+                    vec![Span::styled("  tmr  ".to_string(), Style::default().fg(dim))]
+                };
+                match &timer_str {
+                    Some(t) => {
+                        tmr_line.push(Span::styled(t.clone(), Style::default().fg(yellow)));
+                        tmr_line.push(Span::styled(format!("  {mode_label}"), Style::default().fg(dim)));
+                    }
+                    None => {
+                        tmr_line.push(Span::styled("off", Style::default().fg(surface)));
+                    }
+                }
+                lines.push(Line::from(tmr_line));
             }
 
             // Keep animation time updated even in compact mode
@@ -484,6 +542,8 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                     Span::styled("imer  ", Style::default().fg(dim)),
                     Span::styled("m", Style::default().fg(green)),
                     Span::styled("ute  ", Style::default().fg(dim)),
+                    Span::styled("p", Style::default().fg(green)),
+                    Span::styled("ause  ", Style::default().fg(dim)),
                     Span::styled("c", Style::default().fg(text)),
                     Span::styled("ompact  ", Style::default().fg(dim)),
                     Span::styled("q", Style::default().fg(red)),
@@ -544,8 +604,16 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                         Span::styled("timer: 15m → 45m → 1h → off", Style::default().fg(dim)),
                     ]),
                     Line::from(vec![
+                        Span::styled("  h/l on tmr        ", Style::default().fg(yellow)),
+                        Span::styled("±1 min (shift: ±1 sec)", Style::default().fg(dim)),
+                    ]),
+                    Line::from(vec![
                         Span::styled("  m                 ", Style::default().fg(green)),
                         Span::styled("mute/unmute", Style::default().fg(dim)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  p                 ", Style::default().fg(green)),
+                        Span::styled("pause: mute + freeze timer", Style::default().fg(dim)),
                     ]),
                     Line::from(vec![
                         Span::styled("  c                 ", Style::default().fg(text)),
@@ -659,9 +727,27 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                         }
                         state.paused.store(!was_paused, Ordering::Relaxed);
                     }
+                    KeyCode::Char('p') => {
+                        // Mute (same fade as `m`) and freeze/resume the timer countdown.
+                        let was_paused = state.paused.load(Ordering::Relaxed);
+                        if was_paused && state.fade_out.load(Ordering::Relaxed) {
+                            state.fade_out.store(false, Ordering::Relaxed);
+                        }
+                        state.paused.store(!was_paused, Ordering::Relaxed);
+
+                        if let Some(remaining) = timer_paused_remaining.take() {
+                            timer_end = Some(Instant::now() + remaining);
+                        } else if let Some(end) = timer_end {
+                            let now = Instant::now();
+                            let remaining = if end > now { end - now } else { Duration::from_secs(0) };
+                            timer_paused_remaining = Some(remaining);
+                            timer_end = None;
+                        }
+                    }
                     KeyCode::Up | KeyCode::Char('k') => { selected_row = next_row(selected_row, -1); }
                     KeyCode::Down | KeyCode::Char('j') => { selected_row = next_row(selected_row, 1); }
-                    KeyCode::Right | KeyCode::Char('l') => {
+                    KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('L') => {
+                        let shift = key.modifiers.contains(KeyModifiers::SHIFT) || key.code == KeyCode::Char('L');
                         match selected_row {
                             ROW_NOISE => {
                                 let cur = state.noise_type.load(Ordering::Relaxed);
@@ -690,10 +776,15 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                                 *b = (*b + step).min(400.0);
                             }
                             ROW_MOD => { let mut m = state.modulation_depth.lock().unwrap(); *m = (*m + 0.02).min(0.20); }
+                            ROW_TIMER => {
+                                let delta = if shift { 1 } else { 60 };
+                                adjust_timer_by(&mut timer_end, &mut timer_paused_remaining, &mut timer_mode, delta);
+                            }
                             _ => {}
                         }
                     }
-                    KeyCode::Left | KeyCode::Char('h') => {
+                    KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('H') => {
+                        let shift = key.modifiers.contains(KeyModifiers::SHIFT) || key.code == KeyCode::Char('H');
                         match selected_row {
                             ROW_NOISE => {
                                 let cur = state.noise_type.load(Ordering::Relaxed);
@@ -722,6 +813,10 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                                 *b = (*b - step).max(40.0);
                             }
                             ROW_MOD => { let mut m = state.modulation_depth.lock().unwrap(); *m = (*m - 0.02).max(0.0); }
+                            ROW_TIMER => {
+                                let delta = if shift { -1 } else { -60 };
+                                adjust_timer_by(&mut timer_end, &mut timer_paused_remaining, &mut timer_mode, delta);
+                            }
                             _ => {}
                         }
                     }
