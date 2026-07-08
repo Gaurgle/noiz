@@ -711,6 +711,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                             3 => Some(Instant::now() + Duration::from_secs(60 * 60)),
                             _ => None,
                         };
+                        timer_paused_remaining = None; // a fresh preset is never frozen
                         state.fade_out.store(false, Ordering::Relaxed);
                         state.paused.store(false, Ordering::Relaxed);
                         timer_fired = false;
@@ -729,19 +730,29 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                     }
                     KeyCode::Char('p') => {
                         // Mute (same fade as `m`) and freeze/resume the timer countdown.
+                        // The freeze/resume direction is derived from the new paused
+                        // state (not toggled independently) so it can't end up
+                        // inverted relative to the mute — e.g. if `m` already muted
+                        // without freezing, `p` here just unmutes and leaves the
+                        // (never-frozen) timer alone instead of freezing it.
                         let was_paused = state.paused.load(Ordering::Relaxed);
+                        let now_paused = !was_paused;
                         if was_paused && state.fade_out.load(Ordering::Relaxed) {
                             state.fade_out.store(false, Ordering::Relaxed);
                         }
-                        state.paused.store(!was_paused, Ordering::Relaxed);
+                        state.paused.store(now_paused, Ordering::Relaxed);
 
-                        if let Some(remaining) = timer_paused_remaining.take() {
+                        if now_paused {
+                            if timer_paused_remaining.is_none() {
+                                if let Some(end) = timer_end {
+                                    let now = Instant::now();
+                                    let remaining = if end > now { end - now } else { Duration::from_secs(0) };
+                                    timer_paused_remaining = Some(remaining);
+                                    timer_end = None;
+                                }
+                            }
+                        } else if let Some(remaining) = timer_paused_remaining.take() {
                             timer_end = Some(Instant::now() + remaining);
-                        } else if let Some(end) = timer_end {
-                            let now = Instant::now();
-                            let remaining = if end > now { end - now } else { Duration::from_secs(0) };
-                            timer_paused_remaining = Some(remaining);
-                            timer_end = None;
                         }
                     }
                     KeyCode::Up | KeyCode::Char('k') => { selected_row = next_row(selected_row, -1); }
