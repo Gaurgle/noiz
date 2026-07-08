@@ -37,6 +37,7 @@ pub struct AudioState {
     // Timer end signal
     pub timer_signal: AtomicBool,
     pub tone_click: AtomicBool,
+    pub tone_tick: AtomicBool,
 }
 
 impl AudioState {
@@ -64,6 +65,7 @@ impl AudioState {
 
             timer_signal: AtomicBool::new(false),
             tone_click: AtomicBool::new(false),
+            tone_tick: AtomicBool::new(false),
         }
     }
 }
@@ -168,6 +170,16 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
     let mut click_sample: usize = 0;
     let mut click_phase: f32 = 0.0;
     let click_len = sig_unit; // 130ms, same as one dit
+
+    // Tick tone — tiny, shorter and higher-pitched than the click, for
+    // minute/second nudges on the timer row
+    let tick_freq: f32 = 320.0;
+    let tick_vol: f32 = 0.14;
+    let tick_len = (sample_rate * 0.045) as usize; // 45ms
+    let tick_ramp = (sample_rate * 0.005) as usize; // 5ms attack/release
+    let mut tick_active = false;
+    let mut tick_sample: usize = 0;
+    let mut tick_phase: f32 = 0.0;
 
     let stream = device.build_output_stream(
         &stream_config,
@@ -282,6 +294,14 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                     state.tone_click.store(false, Ordering::Relaxed);
                 }
 
+                // Tick tone on timer minute/second nudge
+                if state.tone_tick.load(Ordering::Relaxed) {
+                    tick_active = true;
+                    tick_sample = 0;
+                    tick_phase = 0.0;
+                    state.tone_tick.store(false, Ordering::Relaxed);
+                }
+
                 // Pause fade (0.4s)
                 let pause_speed = 1.0 / (sample_rate * 0.4);
                 if paused {
@@ -335,7 +355,22 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                     if click_sample >= click_len { click_active = false; }
                 }
 
-                if pause_vol <= 0.0 && !sig_active && !click_active && sig_out == 0.0 {
+                // Tick tone (tiny nudge)
+                if tick_active {
+                    let ramp_env = if tick_sample < tick_ramp {
+                        tick_sample as f32 / tick_ramp as f32
+                    } else if tick_sample >= tick_len - tick_ramp {
+                        (tick_len - 1 - tick_sample) as f32 / tick_ramp as f32
+                    } else {
+                        1.0
+                    };
+                    sig_out += (tick_phase * std::f32::consts::TAU).sin() * tick_vol * ramp_env;
+                    tick_phase = (tick_phase + tick_freq / sample_rate) % 1.0;
+                    tick_sample += 1;
+                    if tick_sample >= tick_len { tick_active = false; }
+                }
+
+                if pause_vol <= 0.0 && !sig_active && !click_active && !tick_active && sig_out == 0.0 {
                     for sample in frame.iter_mut() { *sample = 0.0; }
                     continue;
                 }

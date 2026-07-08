@@ -779,6 +779,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                             ROW_TIMER => {
                                 let delta = if shift { 1 } else { 60 };
                                 adjust_timer_by(&mut timer_end, &mut timer_paused_remaining, &mut timer_mode, delta);
+                                state.tone_tick.store(true, Ordering::Relaxed);
                             }
                             _ => {}
                         }
@@ -816,6 +817,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                             ROW_TIMER => {
                                 let delta = if shift { -1 } else { -60 };
                                 adjust_timer_by(&mut timer_end, &mut timer_paused_remaining, &mut timer_mode, delta);
+                                state.tone_tick.store(true, Ordering::Relaxed);
                             }
                             _ => {}
                         }
