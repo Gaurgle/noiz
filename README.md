@@ -138,4 +138,4 @@ Rust, [cpal](https://github.com/RustAudio/cpal), [ratatui](https://github.com/ra
 ## See Also
 
 - [repoz](https://github.com/Gaurgle/repos-cli): terminal dashboard for managing multiple git repos
-- [notez](https://github.com/Gaurgle/notez-cli): fast terminal note-taking with fuzzy search
+- [notez](https://github.com/Gaurgle/notez): fast terminal note-taking with fuzzy search
