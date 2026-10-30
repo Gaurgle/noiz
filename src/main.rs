@@ -12,7 +12,7 @@ use clap::Parser;
 use audio::AudioState;
 
 #[derive(Parser)]
-#[command(name = "noiz", about = "Terminal noise generator for focus")]
+#[command(name = "noiz", version, about = "Terminal noise generator for focus")]
 struct Cli {
     /// Noise type: white, pink, brown
     #[arg(default_value = "brown")]
