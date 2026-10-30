@@ -106,9 +106,7 @@ Presets are completely independent from noise, so you can combine any noise type
 
 Carrier frequency is adjustable (40-400 Hz) via the **tone** control.
 
-## Rain Overlay (experimental)
-
-> Rain is a work in progress; sample quality is being improved. It only works when running noiz from the cloned repo directory.
+## Rain Overlay
 
 Rain samples are layered on top of any noise/binaural combination. Press `r` to cycle through:
 
@@ -118,7 +116,9 @@ Rain samples are layered on top of any noise/binaural combination. Press `r` to 
 | **calm** | Steady rain |
 | **heavy** | Downpour |
 
-Samples are loaded from `samples-rain/` relative to the binary or current directory. Transitions crossfade with 500ms fade envelopes.
+Samples are loaded from `samples-rain/` next to the binary, or in the current directory. If neither exists (for example after `cargo install` without the samples), rain is silently unavailable, so run noiz from the cloned repo or copy `samples-rain/` next to the binary.
+
+Each sample is turned into a seamless loop once at startup: any baked-in fade-out at the end of the file is trimmed, the audio is resampled to the output device rate (so 44.1 kHz files keep their pitch on a 48 kHz device), and the end of the file is blended into its start with an equal-power (sin/cos) crossfade one tenth of the sample long (between 1 and 5 s), so a 15 s file loops every 13.5 s. Loops louder than -30 dBFS RMS are then turned down to that level so the rain types sit at comparable loudness; quieter samples are left untouched (nothing is boosted). Playback then just reads the loop and wraps. Switching rain types crossfades the old and new rain with 500 ms equal-power envelopes.
 
 ## Features
 
@@ -127,7 +127,7 @@ Samples are loaded from `samples-rain/` relative to the binary or current direct
 - **Fade in/out**: 750ms on start/quit, 0.4s on pause, 5s on timer expiry
 - **Stereo modulation**: adjustable slow LFO with different phase per channel
 - **Binaural beats**: pure discrete L/R sine tones, no channel bleed
-- **Rain overlay**: preloaded wav samples with crossfade looping
+- **Rain overlay**: wav samples baked into seamless loops at startup (fade trim, resample to device rate, equal-power crossfade, level normalisation)
 - **Visualizer**: spectrum bars for noise, L/R sweep for binaural, rain drops by intensity
 - **Timer**: preset 15m/45m/1h via `t` in the TUI, or any duration via CLI (`30s`, `2h`, etc.). Fades out, plays a morse "end" signal, stays open
 
