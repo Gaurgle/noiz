@@ -116,14 +116,15 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
     let mut pink_vol: f32 = pink_target;
     let mut brown_vol: f32 = brown_target;
 
-    // Preload rain samples
-    let rain_samples: [Option<samples::Sample>; 3] = [
-        samples::load_sample(1),
-        samples::load_sample(2),
-        samples::load_sample(3),
-    ];
-    let mut rain_player: Option<samples::SamplePlayer> = None;
-    let mut rain_outgoing: Option<samples::SamplePlayer> = None;
+    // Bake seamless rain loops at the device rate; the callback only clones Arcs
+    let device_rate = sample_rate as u32;
+    let rain_loops: [Option<Arc<samples::LoopSample>>; 3] = [1, 2, 3].map(|t| {
+        samples::load_sample(t)
+            .map(|s| Arc::new(samples::bake_loop(&s, device_rate)))
+    });
+    // One incoming voice plus outgoing voices still fading; the quietest is stolen when full
+    let mut rain_voices: [Option<samples::LoopVoice>; 3] = [None, None, None];
+    let rain_fade_secs = 0.5;
 
     // Stereo LFO
     let mut lfo_phase_l: f32 = 0.0;
@@ -220,22 +221,28 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
             // Rain toggle
             if state.rain_pending.load(Ordering::Relaxed) {
                 let rt = state.rain_type.load(Ordering::Relaxed);
-                if let Some(mut current) = rain_player.take() {
-                    current.fading_out = true;
-                    current.fading_in = false;
-                    rain_outgoing = Some(current);
-                }
-                if rt > 0 {
-                    let idx = (rt - 1) as usize;
-                    if let Some(ref sample) = rain_samples[idx] {
-                        rain_player = Some(samples::SamplePlayer::from_preloaded(sample, 2000.0));
+                for voice in rain_voices.iter_mut().flatten() {
+                    if !voice.is_releasing() {
+                        voice.release(sample_rate, rain_fade_secs);
                     }
+                }
+                let next = (rt as usize).checked_sub(1).and_then(|i| rain_loops.get(i)?.as_ref());
+                if let Some(looped) = next {
+                    let level = |v: &Option<samples::LoopVoice>| v.as_ref().map_or(0.0, |v| v.level());
+                    let slot = rain_voices.iter().position(Option::is_none).unwrap_or_else(|| {
+                        (0..rain_voices.len())
+                            .min_by(|&a, &b| level(&rain_voices[a]).total_cmp(&level(&rain_voices[b])))
+                            .unwrap_or(0)
+                    });
+                    rain_voices[slot] = Some(samples::LoopVoice::start(Arc::clone(looped), sample_rate, rain_fade_secs));
                 }
                 state.rain_pending.store(false, Ordering::Relaxed);
             }
 
-            if rain_outgoing.as_ref().map_or(false, |p| p.is_silent()) {
-                rain_outgoing = None;
+            for slot in rain_voices.iter_mut() {
+                if slot.as_ref().is_some_and(|v| v.finished()) {
+                    *slot = None;
+                }
             }
 
             let ramp_speed = 1.0 / (sample_rate * 1.5); // 1.5s ramp per generator
@@ -389,13 +396,8 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                 let mut out_r = nr * lfo_r * current_noise_vol;
 
                 // Rain — own volume
-                if let Some(ref mut player) = rain_player {
-                    let (rl, rr) = player.next_stereo(sample_rate);
-                    out_l += rl * rain_vol;
-                    out_r += rr * rain_vol;
-                }
-                if let Some(ref mut player) = rain_outgoing {
-                    let (rl, rr) = player.next_stereo(sample_rate);
+                for voice in rain_voices.iter_mut().flatten() {
+                    let (rl, rr) = voice.next();
                     out_l += rl * rain_vol;
                     out_r += rr * rain_vol;
                 }
