@@ -14,6 +14,7 @@ pub struct PinkNoise {
     rows: [f32; 16],
     running_sum: f32,
     index: u32,
+    lp: f32, // single-pole lowpass state
 }
 
 impl PinkNoise {
@@ -22,6 +23,7 @@ impl PinkNoise {
             rows: [0.0; 16],
             running_sum: 0.0,
             index: 0,
+            lp: 0.0,
         }
     }
 
@@ -40,7 +42,10 @@ impl PinkNoise {
 
         // Normalize (16 rows contribute, plus one white sample)
         let white: f32 = rng.gen_range(-1.0..1.0);
-        (self.running_sum + white) / (num_rows as f32 + 1.0)
+        let raw = (self.running_sum + white) / (num_rows as f32 + 1.0);
+        // Gentle lowpass (about 5 kHz at 44.1-48 kHz) to soften the hiss. Lower coeff = warmer
+        self.lp += 0.5 * (raw - self.lp);
+        self.lp
     }
 }
 
