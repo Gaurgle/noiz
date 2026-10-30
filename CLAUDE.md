@@ -63,8 +63,11 @@ reformat untouched files in an unrelated change.
 
 - The cpal callback is real-time: no allocation, locking or blocking inside
   it. Share state through atomics or lock-free structures.
-- Rain samples are 22 s stereo 44.1 kHz PCM16 wav. The device may run at
-  48 kHz; the loop player must not assume the file rate.
+- Rain samples are 15 to 22 s stereo 44.1 kHz PCM16 wav; export them flat,
+  without a fade. `bake_loop` trims a baked fade, resamples to the device
+  rate and bakes an equal-power crossfade once at load; the callback only
+  reads, increments and wraps. The crossfade is a tenth of the sample, so
+  a 15 s file loops at 13.5 s.
 - `samples_dir()` looks next to the binary first, then `./samples-rain`, so
   `cargo install` without the samples silently disables rain.
 - Timer and pause state once desynced and froze the timer (commit ff7b34d);

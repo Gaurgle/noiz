@@ -8,8 +8,9 @@ and the next authorized step. Keep it short: finished tickets go to
 
 ## Current lead
 
-None. Relay was set up on 2026-10-30 by an ordinary Claude session (Fable
-5.1), which did not take the lead. Baton released, no workers running.
+None. Baton released 2026-10-30 about 12:40 CET by the Claude Code
+`noiz-coordinator` session (Fable 5.1) that took it at 11:58 CET. No
+workers or reviewers running; both agents finished and reported.
 
 ## Authorized by the owner
 
@@ -22,36 +23,46 @@ releases.
 
 2026-10-30, Andreas, same session, on the plan that named NOIZ-1 and NOIZ-4
 as the first pair: "sounds good. i like the plan, lets do it. ship it and
-start". Authorized: NOIZ-1 (seamless looper) and NOIZ-4 (clippy cleanup),
-in that order or in parallel on disjoint files. No standing scope beyond
-those two; the lead asks before dispatching anything else. Stop conditions:
-none recorded beyond the safe-merge rule.
+start". Authorized: NOIZ-1 (done) and NOIZ-4 (clippy cleanup), in that
+order. No standing scope beyond those two; the lead asks before dispatching
+anything else. Stop conditions: none recorded beyond the safe-merge rule.
+
+2026-10-30, Andreas, in the lead session: approved the `rustfft` dependency
+and basing on `main` for the spectroscope spike only. "lets wrap this up
+and ship it" closed the session after NOIZ-1; NOIZ-4 was not started.
 
 ## In flight
 
-Nothing dispatched yet.
+Nothing dispatched. One worktree kept by the sweeper:
 
-Input for NOIZ-1: Andreas added `new-light-rain-loop.wav` at the repo root
-(15 s, stereo 44.1 kHz PCM16, level flat from head to tail at about -30 dB
-mean, no baked fade, unlike the three files in `samples-rain/`). The worker
-should treat it as the reference loop source and decide with the lead
-whether it replaces `samples-rain/light-rain.wav`.
+- `.claude/worktrees/SPIKE-scope`, branch `spike/spectroscope` (pushed,
+  commit e616749, base 614cc37). Owner-requested demo of a real FFT
+  spectroscope of the mixed output, toggled with `v`: lock-free ring tap in
+  the callback, rustfft 2048-point Hann, braille canvas. Not reviewed, not
+  for merge as is; it conflicts with NOIZ-1 on `src/audio.rs`. Owner: "we
+  can work more on that later". A proper ticket (layout, stereo tap for a
+  vectorscope, modes, settings) belongs after NOIZ-2 and NOIZ-3; ask before
+  creating it. Removing the worktree or remote branch is the owner's call.
 
 ## Decisions and open questions
 
 - Checks: `cargo build`, `cargo clippy --all-targets`, `cargo test`. Clippy
-  is reported, not gating, until the cleanup ticket lands. fmt is not a gate.
+  is reported, not gating, until NOIZ-4 lands (12 warnings on `main`). fmt
+  is not a gate.
+- Rain levels: loops are attenuated to -30 dBFS RMS, so calm and heavy are
+  about 9 dB quieter than before at the default `rain_vol` 0.35. Owner may
+  want a higher default; per-sample trims are noted on NOIZ-8 and NOIZ-13.
 - AirPods noise control: no public macOS API. Candidate route is shelling out
   to `pods-control` (raulgg/tap, private AVRouting and CoreAudio HAL
   properties) as an optional integration; see the analysis and its ticket.
-- Open: whether to add CI (GitHub Actions, macOS + ubuntu) as an early
-  ticket so the safe-merge rule regains its CI condition.
+- Open: whether to add CI (NOIZ-5) early so the safe-merge rule regains its
+  CI condition.
 
 ## Next step
 
-The next lead (started with `relay`) takes the baton, runs the start
-checks, and dispatches NOIZ-1 and NOIZ-4. Stop condition: both integrated
-under the safe-merge rule, or a condition fails.
+NOIZ-4 (clippy cleanup) is authorized and Ready; base it on current `main`
+(ea909bc or later). When it lands, make clippy gating in
+`docs/agent-workflow.md` and `CLAUDE.md`. Anything else needs the owner.
 
 ## Start the lead
 
