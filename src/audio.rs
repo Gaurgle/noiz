@@ -43,7 +43,7 @@ pub struct AudioState {
 impl AudioState {
     pub fn new(noise_vol: f32) -> Self {
         Self {
-            noise_type: AtomicU8::new(2), // pink (0=off, 1=white, 2=pink, 3=brown)
+            noise_type: AtomicU8::new(3), // brown (0=off, 1=white, 2=pink, 3=brown)
             noise_vol: Mutex::new(noise_vol),
             target_noise_vol: Mutex::new(noise_vol),
             pending_switch: AtomicBool::new(false),

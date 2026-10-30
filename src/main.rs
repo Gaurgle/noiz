@@ -15,7 +15,7 @@ use audio::AudioState;
 #[command(name = "noiz", version, about = "Terminal noise generator for focus")]
 struct Cli {
     /// Noise type: white, pink, brown
-    #[arg(default_value = "pink")]
+    #[arg(default_value = "brown")]
     source: String,
 
     /// Timer duration: 45m, 1h, 30s
@@ -101,7 +101,7 @@ fn parse_noise_type(s: &str) -> u8 {
         "white" | "w" => 1,
         "pink" | "p" => 2,
         "brown" | "b" => 3,
-        _ => 2,
+        _ => 3,
     }
 }
 

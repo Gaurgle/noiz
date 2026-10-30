@@ -29,7 +29,7 @@ cargo install --path .
 ## Usage
 
 ```bash
-noiz                    # pink noise (default, 30% vol)
+noiz                    # brown noise (default, 30% vol)
 noiz white              # white noise
 noiz pink               # pink noise
 noiz brown 45m          # timer, fade out after 45 minutes
