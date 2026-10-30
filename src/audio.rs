@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -8,6 +8,47 @@ use rand::SeedableRng;
 
 use crate::noise::{NoiseMix, NoiseGen};
 use crate::samples;
+
+/// Ring length for the scope tap; a power of two so the index wraps with a mask.
+pub const SCOPE_RING_LEN: usize = 8192;
+
+/// Lock-free single-producer single-consumer ring of the mono output mix.
+///
+/// The audio callback is the only writer. Samples are stored as `f32` bits in
+/// atomics, so the reader never blocks the writer and can never observe a torn
+/// sample. A slow reader just sees newer data; old samples are overwritten.
+pub struct ScopeTap {
+    buf: Box<[AtomicU32]>,
+    written: AtomicUsize, // total samples ever pushed; wraps harmlessly
+}
+
+impl ScopeTap {
+    pub fn new() -> Self {
+        Self {
+            buf: (0..SCOPE_RING_LEN).map(|_| AtomicU32::new(0)).collect(),
+            written: AtomicUsize::new(0),
+        }
+    }
+
+    /// Realtime-safe: two atomic stores, no allocation, no locking.
+    #[inline]
+    pub fn push(&self, sample: f32) {
+        let n = self.written.load(Ordering::Relaxed);
+        self.buf[n & (SCOPE_RING_LEN - 1)].store(sample.to_bits(), Ordering::Relaxed);
+        self.written.store(n.wrapping_add(1), Ordering::Release);
+    }
+
+    /// Copies the latest `out.len()` samples, oldest first, into `out`.
+    /// `out.len()` must not exceed `SCOPE_RING_LEN`.
+    pub fn snapshot(&self, out: &mut [f32]) {
+        let end = self.written.load(Ordering::Acquire);
+        let start = end.wrapping_sub(out.len());
+        for (i, slot) in out.iter_mut().enumerate() {
+            let idx = start.wrapping_add(i) & (SCOPE_RING_LEN - 1);
+            *slot = f32::from_bits(self.buf[idx].load(Ordering::Relaxed));
+        }
+    }
+}
 
 pub struct AudioState {
     // Noise
@@ -38,6 +79,10 @@ pub struct AudioState {
     pub timer_signal: AtomicBool,
     pub tone_click: AtomicBool,
     pub tone_tick: AtomicBool,
+
+    // Spectroscope tap: mono post-volume output and the device rate it runs at
+    pub scope: ScopeTap,
+    pub sample_rate: AtomicU32,
 }
 
 impl AudioState {
@@ -66,6 +111,9 @@ impl AudioState {
             timer_signal: AtomicBool::new(false),
             tone_click: AtomicBool::new(false),
             tone_tick: AtomicBool::new(false),
+
+            scope: ScopeTap::new(),
+            sample_rate: AtomicU32::new(48_000),
         }
     }
 }
@@ -103,6 +151,7 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
     let sample_rate = config.sample_rate().0 as f32;
     let channels = config.channels() as usize;
     let stream_config: cpal::StreamConfig = config.into();
+    state.sample_rate.store(sample_rate as u32, Ordering::Relaxed);
 
     let mut rng = SmallRng::from_entropy();
     let mut noise_gen = NoiseGen::new();
@@ -372,6 +421,7 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
 
                 if pause_vol <= 0.0 && !sig_active && !click_active && !tick_active && sig_out == 0.0 {
                     for sample in frame.iter_mut() { *sample = 0.0; }
+                    state.scope.push(0.0);
                     continue;
                 }
 
@@ -422,6 +472,7 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
                 let envelope = fade_in_vol * fade_out_vol * pause_vol;
                 let final_l = (out_l * envelope + sig_out).clamp(-1.0, 1.0);
                 let final_r = (out_r * envelope + sig_out).clamp(-1.0, 1.0);
+                state.scope.push((final_l + final_r) * 0.5);
 
                 match channels {
                     1 => frame[0] = (final_l + final_r) * 0.5,
@@ -439,4 +490,24 @@ pub fn start_audio(state: Arc<AudioState>) -> Result<Stream, String> {
 
     stream.play().map_err(|e| format!("failed to play stream: {e}"))?;
     Ok(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scope_tap_snapshot_returns_latest_samples_in_order_after_wrap() {
+        let tap = ScopeTap::new();
+        let total = SCOPE_RING_LEN + 100; // forces a wrap
+        for i in 0..total {
+            tap.push(i as f32);
+        }
+        let mut out = [0.0f32; 2048];
+        tap.snapshot(&mut out);
+        let first = (total - out.len()) as f32;
+        for (i, v) in out.iter().enumerate() {
+            assert_eq!(*v, first + i as f32);
+        }
+    }
 }

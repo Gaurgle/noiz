@@ -4,7 +4,10 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::prelude::*;
+use ratatui::symbols::Marker;
+use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
 use ratatui::widgets::{Block, Borders, Padding, Paragraph};
+use rustfft::num_complex::Complex;
 
 use crate::audio::AudioState;
 
@@ -72,6 +75,119 @@ fn adjust_timer_by(
     }
 }
 
+const SCOPE_FFT_LEN: usize = 2048;
+const SCOPE_FLOOR_DB: f32 = -90.0;
+const SCOPE_MIN_HZ: f32 = 20.0;
+const SCOPE_ROWS: usize = 4; // canvas rows; one more row holds the frequency labels
+const SCOPE_MAX_COLS: usize = 42; // matches the separator width
+
+/// Spectrum analyser over the audio tap. Runs on the TUI thread only; every
+/// buffer is allocated once (column buffers again only when the width changes).
+struct Spectroscope {
+    fft: Arc<dyn rustfft::Fft<f32>>,
+    window: Vec<f32>,
+    samples: Vec<f32>,
+    spectrum: Vec<Complex<f32>>,
+    scratch: Vec<Complex<f32>>,
+    bins_db: Vec<f32>,
+    columns_db: Vec<f32>,
+}
+
+impl Spectroscope {
+    fn new() -> Self {
+        let fft = rustfft::FftPlanner::new().plan_fft_forward(SCOPE_FFT_LEN);
+        let scratch = vec![Complex::default(); fft.get_inplace_scratch_len()];
+        let window = (0..SCOPE_FFT_LEN)
+            .map(|i| {
+                let x = i as f32 / SCOPE_FFT_LEN as f32;
+                0.5 - 0.5 * (x * std::f32::consts::TAU).cos()
+            })
+            .collect();
+        Self {
+            fft,
+            window,
+            samples: vec![0.0; SCOPE_FFT_LEN],
+            spectrum: vec![Complex::default(); SCOPE_FFT_LEN],
+            scratch,
+            bins_db: vec![SCOPE_FLOOR_DB; SCOPE_FFT_LEN / 2 + 1],
+            columns_db: Vec::new(),
+        }
+    }
+
+    /// Windowed FFT of `samples` into `bins_db`, scaled so a full-scale sine
+    /// reads about 0 dB (Hann coherent gain is 0.5).
+    fn analyse(&mut self) {
+        for ((c, s), w) in self.spectrum.iter_mut().zip(&self.samples).zip(&self.window) {
+            *c = Complex::new(s * w, 0.0);
+        }
+        self.fft.process_with_scratch(&mut self.spectrum, &mut self.scratch);
+        let scale = 4.0 / SCOPE_FFT_LEN as f32;
+        for (db, c) in self.bins_db.iter_mut().zip(&self.spectrum) {
+            let mag = c.norm() * scale;
+            *db = (20.0 * mag.max(1e-9).log10()).max(SCOPE_FLOOR_DB);
+        }
+    }
+
+    /// Snapshot the tap, analyse and fold into `cols` smoothed log-spaced columns.
+    fn update(&mut self, state: &AudioState, cols: usize) -> &[f32] {
+        state.scope.snapshot(&mut self.samples);
+        self.analyse();
+        let sample_rate = state.sample_rate.load(Ordering::Relaxed) as f32;
+        if self.columns_db.len() != cols {
+            self.columns_db = vec![SCOPE_FLOOR_DB; cols];
+        }
+        for (c, smoothed) in self.columns_db.iter_mut().enumerate() {
+            let target = log_column_db(&self.bins_db, sample_rate, c, cols);
+            // Fast attack, slower release, so peaks show at once but do not flicker
+            let k = if target > *smoothed { 0.6 } else { 0.2 };
+            *smoothed += (target - *smoothed) * k;
+        }
+        &self.columns_db
+    }
+}
+
+/// Position of `freq` on the log axis from SCOPE_MIN_HZ to Nyquist, in 0..1.
+fn log_axis_pos(freq: f32, sample_rate: f32) -> f32 {
+    let nyquist = sample_rate / 2.0;
+    (freq / SCOPE_MIN_HZ).ln() / (nyquist / SCOPE_MIN_HZ).ln()
+}
+
+/// dB value of display column `col` of `cols` on a log frequency axis from
+/// SCOPE_MIN_HZ to Nyquist. Wide columns take the loudest bin they cover;
+/// narrow low-frequency columns interpolate between neighbouring bins.
+fn log_column_db(bins_db: &[f32], sample_rate: f32, col: usize, cols: usize) -> f32 {
+    let nyquist = sample_rate / 2.0;
+    let bin_hz = sample_rate / SCOPE_FFT_LEN as f32;
+    let ratio = nyquist / SCOPE_MIN_HZ;
+    let f0 = SCOPE_MIN_HZ * ratio.powf(col as f32 / cols as f32);
+    let f1 = SCOPE_MIN_HZ * ratio.powf((col + 1) as f32 / cols as f32);
+    let last = bins_db.len() - 1;
+    let b0 = (f0 / bin_hz).round() as usize;
+    let b1 = ((f1 / bin_hz).round() as usize).min(last);
+    if b1 > b0 {
+        bins_db[b0..b1].iter().copied().fold(SCOPE_FLOOR_DB, f32::max)
+    } else {
+        let pos = (((f0 + f1) / 2.0) / bin_hz).min(last as f32);
+        let i = pos.floor() as usize;
+        let frac = pos - i as f32;
+        let next = (i + 1).min(last);
+        bins_db[i] * (1.0 - frac) + bins_db[next] * frac
+    }
+}
+
+/// One text row of frequency labels (100, 1k, 10k) aligned with the log axis.
+fn scope_tick_labels(sample_rate: f32, cols: usize) -> String {
+    let mut row = vec![' '; cols];
+    for (freq, label) in [(100.0, "100"), (1000.0, "1k"), (10000.0, "10k")] {
+        if freq >= sample_rate / 2.0 { continue; }
+        let at = (log_axis_pos(freq, sample_rate) * cols as f32) as usize;
+        for (i, ch) in label.chars().enumerate() {
+            if let Some(slot) = row.get_mut(at + i) { *slot = ch; }
+        }
+    }
+    row.into_iter().collect()
+}
+
 pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = ratatui::init();
     terminal.clear()?;
@@ -89,6 +205,8 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
     let mut timer_fired = false;
     let mut signal_at: Option<Instant> = None;
     let mut timer_paused_remaining: Option<Duration> = None;
+    let mut scope_on = false;
+    let mut scope = Spectroscope::new();
 
     loop {
         let paused = state.paused.load(Ordering::Relaxed);
@@ -367,8 +485,23 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             if !paused { anim_time += (now_inst - last_frame).as_secs_f32(); }
             last_frame = now_inst;
 
+            // Spectroscope replaces the animation strip; drawn over these blank rows below
+            let scope_cols = (area.width as usize).saturating_sub(6).min(SCOPE_MAX_COLS);
+            let mut scope_first_line: Option<usize> = None;
+            if !compact && scope_on {
+                let sample_rate = state.sample_rate.load(Ordering::Relaxed) as f32;
+                lines.push(Line::from(""));
+                scope_first_line = Some(lines.len());
+                for _ in 0..SCOPE_ROWS { lines.push(Line::from("")); }
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", scope_tick_labels(sample_rate, scope_cols)),
+                    Style::default().fg(dim),
+                )));
+                lines.push(Line::from(""));
+            }
+
             // Animations — three side by side: noise slope, binaural pulse, rain drops
-            if !compact {
+            if !compact && !scope_on {
             let elapsed = anim_time;
             let anim_rows = 3;
             let anim_w = 10;
@@ -565,6 +698,33 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             let paragraph = Paragraph::new(lines).block(block);
             frame.render_widget(paragraph, area);
 
+            // Inner origin of the bordered block: 1 border + 1 padding, then the 2-space indent
+            if let Some(first) = scope_first_line {
+                let x = area.x + 4;
+                let y = area.y + 2 + first as u16;
+                let bottom = area.bottom().saturating_sub(1);
+                let height = (SCOPE_ROWS as u16).min(bottom.saturating_sub(y));
+                if scope_cols > 0 && height > 0 {
+                    let columns = scope.update(&state, scope_cols * 2);
+                    let dot_w = columns.len() as f64;
+                    let canvas = Canvas::default()
+                        .marker(Marker::Braille)
+                        .x_bounds([0.0, dot_w])
+                        .y_bounds([SCOPE_FLOOR_DB as f64, 0.0])
+                        .paint(|ctx| {
+                            for (i, db) in columns.iter().enumerate() {
+                                let x = i as f64 + 0.5;
+                                ctx.draw(&CanvasLine {
+                                    x1: x, y1: SCOPE_FLOOR_DB as f64,
+                                    x2: x, y2: *db as f64,
+                                    color: c_noise,
+                                });
+                            }
+                        });
+                    frame.render_widget(canvas, Rect::new(x, y, scope_cols as u16, height));
+                }
+            }
+
             if show_help {
                 let help_lines = vec![
                     Line::from(""),
@@ -620,6 +780,10 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                         Span::styled("compact mode", Style::default().fg(dim)),
                     ]),
                     Line::from(vec![
+                        Span::styled("  v                 ", Style::default().fg(text)),
+                        Span::styled("spectroscope on/off", Style::default().fg(dim)),
+                    ]),
+                    Line::from(vec![
                         Span::styled("  q / esc           ", Style::default().fg(red)),
                         Span::styled("quit", Style::default().fg(dim)),
                     ]),
@@ -671,7 +835,9 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
             }
         })?;
 
-        if event::poll(Duration::from_millis(100))? {
+        // ~30 fps while the scope is visible, the old 10 fps otherwise
+        let frame_wait = if scope_on { Duration::from_millis(33) } else { Duration::from_millis(100) };
+        if event::poll(frame_wait)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press { continue; }
 
@@ -721,6 +887,7 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
                         }
                     }
                     KeyCode::Char('i') => { show_help = true; }
+                    KeyCode::Char('v') => { scope_on = !scope_on; }
                     KeyCode::Char('m') => {
                         let was_paused = state.paused.load(Ordering::Relaxed);
                         if was_paused && state.fade_out.load(Ordering::Relaxed) {
@@ -891,4 +1058,49 @@ pub fn run_tui(state: Arc<AudioState>, timer_end: Option<Instant>) -> Result<(),
 
     ratatui::restore();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RATE: f32 = 48_000.0;
+
+    fn analysed_sine(freq: f32, amp: f32) -> Spectroscope {
+        let mut scope = Spectroscope::new();
+        for (i, s) in scope.samples.iter_mut().enumerate() {
+            *s = amp * (i as f32 * freq / RATE * std::f32::consts::TAU).sin();
+        }
+        scope.analyse();
+        scope
+    }
+
+    #[test]
+    fn full_scale_1khz_sine_peaks_at_1khz_near_0db() {
+        let scope = analysed_sine(1000.0, 1.0);
+        let (peak_bin, peak_db) = scope.bins_db.iter().copied().enumerate()
+            .fold((0, f32::MIN), |best, (i, db)| if db > best.1 { (i, db) } else { best });
+        let peak_hz = peak_bin as f32 * RATE / SCOPE_FFT_LEN as f32;
+        assert!((peak_hz - 1000.0).abs() <= RATE / SCOPE_FFT_LEN as f32, "peak at {peak_hz} Hz");
+        assert!(peak_db > -3.0 && peak_db <= 0.5, "peak level {peak_db} dB");
+    }
+
+    #[test]
+    fn log_columns_put_1khz_peak_in_the_column_covering_1khz() {
+        let scope = analysed_sine(1000.0, 1.0);
+        let cols = 84;
+        let values: Vec<f32> = (0..cols).map(|c| log_column_db(&scope.bins_db, RATE, c, cols)).collect();
+        let loudest = values.iter().copied().enumerate()
+            .fold((0, f32::MIN), |best, (i, db)| if db > best.1 { (i, db) } else { best }).0;
+        let expected = (log_axis_pos(1000.0, RATE) * cols as f32) as usize;
+        assert!(loudest.abs_diff(expected) <= 1, "loudest column {loudest}, expected {expected}");
+    }
+
+    #[test]
+    fn silence_reads_as_the_floor_in_every_column() {
+        let scope = analysed_sine(1000.0, 0.0);
+        for c in 0..84 {
+            assert_eq!(log_column_db(&scope.bins_db, RATE, c, 84), SCOPE_FLOOR_DB);
+        }
+    }
 }
