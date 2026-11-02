@@ -96,7 +96,10 @@ remains the sole dispatcher; do not start a second agent workflow inside it.
    the harness tells you when it ends.
 5. Verify the result against current `main` yourself: run the checks in
    `docs/agent-workflow.md` on the combined result.
-6. Merge under the safe-merge rule, or stop and ask if it does not apply.
+6. Run `scripts/relay-gate <worktree> <accepted diff id> <verified-on>`
+   (see "Safe-merge rule" in `docs/agent-workflow.md`). Merge only on exit
+   0 under the safe-merge rule; otherwise fix what it names, or stop at
+   Ready to integrate and ask.
    The merge commit names the ticket and, for an issue, says `Closes #<n>`.
    Either way report in the owner-facing format, including how to try the
    build. Keep the worktree until the ticket is integrated.
