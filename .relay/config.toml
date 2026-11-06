@@ -1,0 +1,25 @@
+# Relay placeholder values, read by ~/claude-config/scripts/relay-upgrade.
+# DEVIATIONS is the stamp's local-deviations text.
+BOARD = "https://github.com/users/Gaurgle/projects/6"
+BOARD_NUMBER = "6"
+BOARD_OWNER = "Gaurgle"
+BOARD_READ = "`gh project item-list 6 --owner Gaurgle`"
+CHECKS = '''
+cargo build
+cargo clippy --all-targets
+cargo test
+'''
+INTEGRATION_BRANCH = "main"
+INTEGRATION_POLICY = "Owner decision (Andreas, 2026-10-30, at Relay setup): integration is delegated to the lead. The lead may commit the reviewed diff of a ticket, push its branch, merge it into `main` with `git merge --no-ff` and push, when every safe-merge condition below holds. The lead may also commit and push coordination docs (handoff, log, workflow, issue drafts) directly on `main`. The repo has no CI as of setup, so the CI conditions in the safe-merge rule are replaced by the checks below passing locally in the worktree and on the combined result; a push to `main` deploys nothing. Adding CI is its own owner-approved ticket. Andreas keeps `cargo install`, tags and releases."
+LEAD_MODEL = "fable"
+OWNER = "Andreas"
+OWNER_ONLY = "run `cargo install` or publish the crate"
+PREFIX = "noiz"
+PROJECT = "noiz"
+SMALL_MODEL = "sonnet"
+SWEEP = "`scripts/relay-sweep main --skip-ci-check`"
+TICKET_PREFIX = "NOIZ"
+TRY_BUILD_BRANCH = "`cargo run --release --manifest-path <worktree>/Cargo.toml`"
+TRY_BUILD_MAIN = "`cargo run --release` (or `cargo install --path .` to refresh the installed binary)"
+WORKER_MODEL = "opus"
+DEVIATIONS = "no CI at setup, local checks stand in for the CI conditions; clippy is reported, not gating, until NOIZ cleanup ticket lands"
